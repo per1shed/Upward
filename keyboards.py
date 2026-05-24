@@ -56,6 +56,38 @@ def chart_nav_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
         ),
     )
     builder.row(InlineKeyboardButton(text="« Меню", callback_data="menu:home"))
+    builder.row(
+        InlineKeyboardButton(
+            text="⭐ Календарь прорывов",
+            callback_data=f"chart:breakthroughs:{year}",
+        )
+    )
+    return builder.as_markup()
+
+
+def breakthrough_calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️",
+            callback_data=f"chart:breakthroughs:{year - 1}",
+        ),
+        InlineKeyboardButton(
+            text=str(year),
+            callback_data=f"chart:breakthroughs:{year}",
+        ),
+        InlineKeyboardButton(
+            text="▶️",
+            callback_data=f"chart:breakthroughs:{year + 1}",
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="« К графику",
+            callback_data=f"chart:nav:{year}-{month:02d}",
+        )
+    )
+    builder.row(InlineKeyboardButton(text="« Меню", callback_data="menu:home"))
     return builder.as_markup()
 
 

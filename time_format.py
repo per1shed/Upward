@@ -10,10 +10,15 @@ MAX_MINUTES_PER_DAY = 24 * 60
 TIME_INPUT_HINT = "Формат: <b>ЧЧ:ММ</b>\nПример: <code>7:30</code>"
 
 REST_INPUT_HINT = (
-    "Или отправьте <b>отдых</b> — день будет отмечен как день отдыха."
+    "😴 Или отправьте <b>отдых</b> — день будет отмечен как день отдыха."
+)
+
+BREAKTHROUGH_INPUT_HINT = (
+    "⭐ Или отправьте <b>прорыв</b> — день будет отмечен как день прорыва."
 )
 
 REST_KEYWORD = "отдых"
+BREAKTHROUGH_KEYWORD = "прорыв"
 
 DATE_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
 DATE_INPUT_HINT = "Формат: <b>ДД.ММ.ГГГГ</b>\nПример: <code>15.05.2026</code>"
@@ -21,6 +26,10 @@ DATE_INPUT_HINT = "Формат: <b>ДД.ММ.ГГГГ</b>\nПример: <code>
 
 def parse_rest_input(text: str) -> bool:
     return text.strip().casefold() == REST_KEYWORD.casefold()
+
+
+def parse_breakthrough_input(text: str) -> bool:
+    return text.strip().casefold() == BREAKTHROUGH_KEYWORD.casefold()
 
 
 def parse_time_input(text: str) -> tuple[int, int] | None:

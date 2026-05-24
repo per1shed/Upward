@@ -7,9 +7,10 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.enums import ChatAction
 from aiogram.types import CallbackQuery, Message, User
 
-from charts import build_team_progress_chart, chart_photo
+from charts import build_breakthrough_year_calendar, build_team_progress_chart, chart_photo
 from context import get_screen, set_screen
 from database import (
     DayEntry,
@@ -19,14 +20,22 @@ from database import (
     register_user,
     upsert_entry,
 )
-from keyboards import chart_nav_keyboard, main_menu_keyboard, time_prompt_keyboard
+from keyboards import (
+    breakthrough_calendar_keyboard,
+    chart_nav_keyboard,
+    main_menu_keyboard,
+    time_prompt_keyboard,
+)
 from texts import format_user_stats
 from time_format import (
+    BREAKTHROUGH_INPUT_HINT,
+    MAX_MINUTES_PER_DAY,
     REST_INPUT_HINT,
     TIME_INPUT_HINT,
     duration_to_hours,
     format_duration,
     format_duration_clock,
+    parse_breakthrough_input,
     parse_rest_input,
     parse_time_input,
 )
@@ -56,6 +65,11 @@ _EXPIRED_CALLBACK_MARKERS = (
     "response timeout expired",
 )
 
+_MESSAGE_NOT_MODIFIED = "message is not modified"
+
+CHART_LOADING_TEXT = "📊 <b>График строится…</b> ⏳"
+BREAKTHROUGH_LOADING_TEXT = "⭐ <b>Календарь прорывов строится…</b> ⏳"
+
 
 async def safe_callback_answer(
     callback: CallbackQuery,
@@ -70,6 +84,30 @@ async def safe_callback_answer(
         msg = (exc.message or "").lower()
         if not any(marker in msg for marker in _EXPIRED_CALLBACK_MARKERS):
             raise
+
+
+async def safe_edit_text(
+    message: Message,
+    text: str,
+    *,
+    reply_markup=None,
+) -> None:
+    """Редактирует сообщение; повтор с тем же текстом не вызывает ошибку."""
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        msg = (exc.message or "").lower()
+        if _MESSAGE_NOT_MODIFIED not in msg:
+            raise
+
+
+async def delete_message_safe(message: Message | None) -> None:
+    if message is None:
+        return
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
 
 
 def display_name_from_user(user: User) -> str:
@@ -98,21 +136,45 @@ async def ensure_user_callback(callback: CallbackQuery) -> int | None:
 
 
 async def send_team_chart(message: Message, year: int, month: int) -> None:
-    png, caption = await build_team_progress_chart(year, month)
-    await message.answer_photo(
-        chart_photo(png),
-        caption=caption,
-        reply_markup=chart_nav_keyboard(year, month),
-    )
+    loading = await message.answer(CHART_LOADING_TEXT)
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
+        png, caption = await build_team_progress_chart(year, month)
+        await message.answer_photo(
+            chart_photo(png),
+            caption=caption,
+            reply_markup=chart_nav_keyboard(year, month),
+        )
+    finally:
+        await delete_message_safe(loading)
+
+
+async def send_breakthrough_calendar(
+    message: Message, year: int, month: int
+) -> None:
+    loading = await message.answer(BREAKTHROUGH_LOADING_TEXT)
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
+        png, caption = await build_breakthrough_year_calendar(year)
+        await message.answer_photo(
+            chart_photo(png, "breakthroughs.png"),
+            caption=caption,
+            reply_markup=breakthrough_calendar_keyboard(year, month),
+        )
+    finally:
+        await delete_message_safe(loading)
 
 
 async def send_full_statistics(message: Message, user_id: int) -> None:
     today = today_local()
     set_screen(user_id, "stats", chart_year=today.year, chart_month=today.month)
 
-    await message.answer(await format_user_stats(user_id, heading="Ваша статистика"))
     await message.answer(await build_team_summary())
     await send_team_chart(message, today.year, today.month)
+
+
+def _log_input_hints() -> str:
+    return f"{TIME_INPUT_HINT}\n\n{REST_INPUT_HINT}\n{BREAKTHROUGH_INPUT_HINT}"
 
 
 def time_prompt_text(today: dt.date, existing: DayEntry | None = None) -> str:
@@ -120,19 +182,34 @@ def time_prompt_text(today: dt.date, existing: DayEntry | None = None) -> str:
     text = (
         f"📅 Сегодня: <b>{date_label}</b>\n\n"
         f"Введите время продуктивной работы за день:\n{TIME_INPUT_HINT}\n\n"
-        f"{REST_INPUT_HINT}"
+        f"{REST_INPUT_HINT}\n"
+        f"{BREAKTHROUGH_INPUT_HINT}\n\n"
+        "Повторный ввод за тот же день <b>суммируется</b> с уже записанным временем."
     )
     if existing is not None:
         if existing.is_rest:
             text += (
                 "\n\nСейчас: <b>день отдыха</b> — можно изменить "
-                "(время или снова «отдых»)."
+                "(время, «отдых» или «прорыв»). Ввод времени заменит отметку отдыха."
             )
+        elif existing.is_breakthrough:
+            if existing.hours > 0:
+                text += (
+                    f"\n\nСейчас: <b>день прорыва</b> ⭐ · "
+                    f"<b>{format_duration(existing.hours)}</b> "
+                    f"(<code>{format_duration_clock(existing.hours)}</code>). "
+                    "Новое время будет <b>прибавлено</b> к этой сумме."
+                )
+            else:
+                text += (
+                    "\n\nСейчас: <b>день прорыва</b> ⭐ — можно добавить время, "
+                    "«прорыв» или «отдых»."
+                )
         elif existing.hours > 0:
             text += (
                 f"\n\nСейчас записано: <b>{format_duration(existing.hours)}</b> "
-                f"(<code>{format_duration_clock(existing.hours)}</code>) "
-                "— можно обновить."
+                f"(<code>{format_duration_clock(existing.hours)}</code>). "
+                "Новое время будет <b>прибавлено</b> к этой сумме."
             )
     return text
 
@@ -176,7 +253,7 @@ async def ask_time_for_today(
     if isinstance(target, Message):
         await target.answer(text, reply_markup=markup)
     elif target.message:
-        await target.message.edit_text(text, reply_markup=markup)
+        await safe_edit_text(target.message, text, reply_markup=markup)
 
 
 async def build_team_summary() -> str:
@@ -265,7 +342,9 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
     name = display_name_from_user(message.from_user)
 
     if parse_rest_input(text):
-        await upsert_entry(user_id, today, 0.0, name, is_rest=True)
+        await upsert_entry(
+            user_id, today, 0.0, name, is_rest=True, is_breakthrough=False
+        )
         await state.clear()
         set_screen(user_id, "menu")
         await message.answer(
@@ -274,31 +353,86 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         await send_team_chart(message, today.year, today.month)
         return
 
+    if parse_breakthrough_input(text):
+        existing = await get_entry(user_id, today)
+        hours = existing.hours if existing and existing.hours > 0 else 0.0
+        await upsert_entry(
+            user_id, today, hours, name, is_rest=False, is_breakthrough=True
+        )
+        await state.clear()
+        set_screen(user_id, "menu")
+        if hours > 0:
+            result = (
+                f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
+                f"<b>день прорыва</b> ⭐ · <b>{format_duration(hours)}</b>"
+            )
+        else:
+            result = (
+                f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день прорыва</b> ⭐"
+            )
+        await message.answer(result)
+        await send_team_chart(message, today.year, today.month)
+        return
+
     parsed = parse_time_input(text)
     if parsed is None:
         await message.answer(
-            f"Не удалось разобрать время.\n\n{TIME_INPUT_HINT}\n\n{REST_INPUT_HINT}",
+            f"Не удалось разобрать время.\n\n{_log_input_hints()}",
             reply_markup=time_prompt_keyboard(),
         )
         return
 
     hours_int, minutes = parsed
-    hours = duration_to_hours(hours_int, minutes)
+    added_hours = duration_to_hours(hours_int, minutes)
 
-    await upsert_entry(user_id, today, hours, name, is_rest=False)
+    existing = await get_entry(user_id, today)
+    if existing is not None and not existing.is_rest and existing.hours > 0:
+        total_hours = existing.hours + added_hours
+    else:
+        total_hours = added_hours
+
+    if round(total_hours * 60) > MAX_MINUTES_PER_DAY:
+        await message.answer(
+            f"Сумма за день не может превышать 24 часа.\n\n{_log_input_hints()}",
+            reply_markup=time_prompt_keyboard(),
+        )
+        return
+
+    keep_breakthrough = bool(existing and existing.is_breakthrough)
+    await upsert_entry(
+        user_id,
+        today,
+        total_hours,
+        name,
+        is_rest=False,
+        is_breakthrough=keep_breakthrough,
+    )
     await state.clear()
     set_screen(user_id, "menu")
 
-    await message.answer(
-        f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
-        f"<b>{format_duration(hours)}</b> продуктивного времени."
-    )
+    if existing is not None and not existing.is_rest and existing.hours > 0:
+        result_text = (
+            f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
+            f"добавлено <b>{format_duration(added_hours)}</b>, "
+            f"всего <b>{format_duration(total_hours)}</b> продуктивного времени."
+        )
+        if keep_breakthrough:
+            result_text += " ⭐"
+    else:
+        result_text = (
+            f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
+            f"<b>{format_duration(total_hours)}</b> продуктивного времени."
+        )
+        if keep_breakthrough:
+            result_text += " ⭐"
+
+    await message.answer(result_text)
     await send_team_chart(message, today.year, today.month)
 
 
 @router.callback_query(F.data == "menu:stats")
 async def menu_stats(callback: CallbackQuery) -> None:
-    await safe_callback_answer(callback)
+    await safe_callback_answer(callback, "📊 Строим статистику…")
     user_id = await ensure_user_callback(callback)
     if user_id is None:
         return
@@ -306,9 +440,26 @@ async def menu_stats(callback: CallbackQuery) -> None:
         await send_full_statistics(callback.message, user_id)
 
 
+@router.callback_query(F.data.startswith("chart:breakthroughs:"))
+async def chart_breakthroughs(callback: CallbackQuery) -> None:
+    await safe_callback_answer(callback, "⭐ Строим календарь…")
+    viewer_id = await ensure_user_callback(callback)
+    if viewer_id is None:
+        return
+
+    year = int(callback.data.split(":")[-1])
+    ctx = get_screen(viewer_id)
+    month = ctx.get("chart_month", today_local().month)
+
+    set_screen(viewer_id, "stats", chart_year=year, chart_month=month)
+
+    if callback.message:
+        await send_breakthrough_calendar(callback.message, year, month)
+
+
 @router.callback_query(F.data.startswith("chart:nav:"))
 async def chart_nav(callback: CallbackQuery) -> None:
-    await safe_callback_answer(callback)
+    await safe_callback_answer(callback, "📊 Строим график…")
     viewer_id = await ensure_user_callback(callback)
     if viewer_id is None:
         return
@@ -319,12 +470,7 @@ async def chart_nav(callback: CallbackQuery) -> None:
     set_screen(viewer_id, "stats", chart_year=year, chart_month=month)
 
     if callback.message:
-        png, caption = await build_team_progress_chart(year, month)
-        await callback.message.answer_photo(
-            chart_photo(png),
-            caption=caption,
-            reply_markup=chart_nav_keyboard(year, month),
-        )
+        await send_team_chart(callback.message, year, month)
 
 
 @router.message(F.text)
