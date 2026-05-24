@@ -1,0 +1,55 @@
+# Секреты и переменные окружения
+.env
+.env.*
+!.env.example
+
+# Локальная база с данными пользователей
+*.db
+*.sqlite
+*.sqlite3
+
+# Виртуальное окружение Python
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.log
+
+# IDE и редакторы
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Прочее
+*.bak
+*.tmp
