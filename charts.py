@@ -38,6 +38,22 @@ WEEKDAY_ABBR = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 WEEKDAY_LABEL_COLOR = "#222222"
 WEEKEND_LABEL_COLOR = "#E85D4E"
 BREAKTHROUGH_CELL_COLOR = "#FFF8E1"
+EMPTY_USER_BLEND = 0.78
+
+
+def _pale_user_color(base_color: str) -> str:
+    """Непрозрачный бледный оттенок цвета участника для пустых дней."""
+    r, g, b = mcolors.to_rgb(base_color)
+    mix = EMPTY_USER_BLEND
+    return mcolors.to_hex(
+        (r * (1 - mix) + mix, g * (1 - mix) + mix, b * (1 - mix) + mix)
+    )
+
+
+def _apply_y_grid(ax) -> None:
+    """Горизонтальная сетка на заднем плане, под столбцами."""
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", linestyle="--", alpha=0.35, color="#BBBBBB", zorder=0)
 
 
 def _entry_for_day(
@@ -62,13 +78,49 @@ def _bar_display_height(entry: DayEntry, *, rest_height: float) -> float:
     return entry.hours
 
 
+def _day_is_marked(entry: DayEntry) -> bool:
+    """День считается отмеченным, если есть время, отдых или прорыв."""
+    return entry.is_rest or entry.is_breakthrough or entry.hours > 0
+
+
+def _annotate_team_bar(ax, bar, entry: DayEntry, base_color: str) -> None:
+    cx = bar.get_x() + bar.get_width() / 2
+    if entry.is_breakthrough:
+        ax.text(
+            cx,
+            bar.get_height(),
+            "★",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+            color=base_color,
+            zorder=4,
+        )
+    if entry.is_rest or entry.hours <= 0:
+        return
+    label_y = bar.get_height() * 0.45 if entry.is_breakthrough else bar.get_height()
+    label_va = "center" if entry.is_breakthrough else "bottom"
+    ax.text(
+        cx,
+        label_y,
+        format_duration_clock(entry.hours),
+        ha="center",
+        va=label_va,
+        fontsize=7,
+        fontweight="bold",
+        color="#222222",
+        zorder=4,
+    )
+
+
 def _user_bar_color(base_color: str, entry: DayEntry) -> str | tuple:
     """Отдых — цвет восстановления; продуктивность/прорыв — цвет участника."""
     if entry.is_rest:
         return REST_COLOR
     if entry.is_breakthrough or entry.hours > 0:
         return base_color
-    return mcolors.to_rgba(base_color, alpha=0.22)
+    return _pale_user_color(base_color)
 
 
 def _day_bar_color(
@@ -148,12 +200,20 @@ def _render_single_chart(
         for i, day in enumerate(all_days)
     ]
 
-    bars = ax.bar(day_numbers, values, color=colors, width=0.72, edgecolor="white")
     ax.set_ylabel("Время (часы)", fontsize=11)
     ax.set_xlim(0.4, last_day + 0.6)
-    _apply_day_axis_labels(ax, all_days)
     ax.set_ylim(0, max(max_value * 1.3, 1.0))
-    ax.grid(axis="y", linestyle="--", alpha=0.35)
+    _apply_y_grid(ax)
+
+    bars = ax.bar(
+        day_numbers,
+        values,
+        color=colors,
+        width=0.72,
+        edgecolor="white",
+        zorder=3,
+    )
+    _apply_day_axis_labels(ax, all_days)
 
     for bar, day, entry in zip(bars, all_days, day_entries):
         if entry.is_rest or entry.hours <= 0:
@@ -167,6 +227,7 @@ def _render_single_chart(
             fontsize=8,
             fontweight="bold",
             color="#222222",
+            zorder=4,
         )
 
     legend_handles = [
@@ -201,75 +262,66 @@ def _render_team_chart(
     _, last_day = calendar.monthrange(year, month)
     all_days = [dt.date(year, month, day) for day in range(1, last_day + 1)]
     day_numbers = np.arange(1, last_day + 1)
-    n_users = len(users_series)
 
     fig, ax = plt.subplots(figsize=(max(12, last_day * 0.42), 6))
     fig.patch.set_facecolor("#FAFAFA")
     ax.set_facecolor("#FAFAFA")
 
     group_width = 0.82
-    bar_width = group_width / max(n_users, 1)
 
-    all_day_entries = [
-        [_entry_for_day(entries, day) for day in all_days]
+    user_rest_heights = [
+        _max_productive_hours([_entry_for_day(entries, day) for day in all_days])
         for _name, entries in users_series
     ]
+
     max_value = 0.0
-
-    for idx, (name, entries) in enumerate(users_series):
-        day_entries = all_day_entries[idx]
-        rest_height = _max_productive_hours(day_entries)
-        values = [_bar_display_height(e, rest_height=rest_height) for e in day_entries]
-        max_value = max(max_value, max(values) if values else 0.0)
-        offset = (idx - (n_users - 1) / 2) * bar_width
-        x = day_numbers + offset
-        base_color = USER_COLORS[idx % len(USER_COLORS)]
-
-        bar_colors = [_user_bar_color(base_color, e) for e in day_entries]
-
-        bars = ax.bar(
-            x,
-            values,
-            width=bar_width * 0.92,
-            color=bar_colors,
-            edgecolor="white",
-            linewidth=0.6,
-        )
-
-        for bar, entry in zip(bars, day_entries):
-            cx = bar.get_x() + bar.get_width() / 2
-            if entry.is_breakthrough:
-                ax.text(
-                    cx,
-                    bar.get_height(),
-                    "★",
-                    ha="center",
-                    va="bottom",
-                    fontsize=9,
-                    fontweight="bold",
-                    color=base_color,
-                )
-            if entry.is_rest or entry.hours <= 0:
+    for day in all_days:
+        for idx, (_name, entries) in enumerate(users_series):
+            entry = _entry_for_day(entries, day)
+            if not _day_is_marked(entry):
                 continue
-            label_y = bar.get_height() * 0.45 if entry.is_breakthrough else bar.get_height()
-            label_va = "center" if entry.is_breakthrough else "bottom"
-            ax.text(
-                cx,
-                label_y,
-                format_duration_clock(entry.hours),
-                ha="center",
-                va=label_va,
-                fontsize=7,
-                fontweight="bold",
-                color="#222222",
+            height = _bar_display_height(
+                entry, rest_height=user_rest_heights[idx]
             )
+            max_value = max(max_value, height)
 
     ax.set_ylabel("Время (часы)", fontsize=11)
     ax.set_xlim(0.4, last_day + 0.6)
+    ax.set_ylim(0, max(max_value * 1.35, 1.0))
+    _apply_y_grid(ax)
+
+    for day_num, day in zip(day_numbers, all_days):
+        marked: list[tuple[int, DayEntry]] = []
+        for idx, (_name, entries) in enumerate(users_series):
+            entry = _entry_for_day(entries, day)
+            if _day_is_marked(entry):
+                marked.append((idx, entry))
+
+        if not marked:
+            continue
+
+        bar_width = group_width / len(marked)
+        for slot, (idx, entry) in enumerate(marked):
+            offset = (slot - (len(marked) - 1) / 2) * bar_width
+            x = day_num + offset
+            base_color = USER_COLORS[idx % len(USER_COLORS)]
+            height = _bar_display_height(
+                entry, rest_height=user_rest_heights[idx]
+            )
+            color = _user_bar_color(base_color, entry)
+
+            bar = ax.bar(
+                x,
+                height,
+                width=bar_width * 0.92,
+                color=color,
+                edgecolor="white",
+                linewidth=0.6,
+                zorder=3,
+            )[0]
+            _annotate_team_bar(ax, bar, entry, base_color)
+
     _apply_day_axis_labels(ax, all_days)
-    y_top = max(max_value * 1.35, 1.0)
-    ax.set_ylim(0, y_top)
-    ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     user_handles = [
         Patch(
