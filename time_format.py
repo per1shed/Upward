@@ -13,8 +13,16 @@ REST_INPUT_HINT = (
     "😴 Или отправьте <b>отдых</b> — день будет отмечен как день отдыха."
 )
 
+MAX_BREAKTHROUGH_NOTE_LEN = 300
+
 BREAKTHROUGH_INPUT_HINT = (
     "⭐ Или отправьте <b>прорыв</b> — день будет отмечен как день прорыва."
+)
+
+BREAKTHROUGH_NOTE_PROMPT = (
+    "⭐ <b>Опишите свой прорыв</b> одним сообщением.\n"
+    "Этот текст появится в списке прорывов.\n\n"
+    f"До {MAX_BREAKTHROUGH_NOTE_LEN} символов."
 )
 
 REST_KEYWORD = "отдых"

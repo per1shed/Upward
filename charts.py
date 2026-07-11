@@ -253,6 +253,43 @@ def _render_single_chart(
     return buf.read()
 
 
+def _draw_rest_bar(
+    ax,
+    x: float,
+    height: float,
+    bar_width: float,
+    user_color: str,
+):
+    """Бирюзовый отдых с контуром цвета участника строго внутри столбца."""
+    outer_w = bar_width * 0.92
+    # Контур = внешний слой цвета пользователя, заливка чуть меньше внутри
+    inset = min(outer_w * 0.14, 0.06)
+    outer = ax.bar(
+        x,
+        height,
+        width=outer_w,
+        color=user_color,
+        edgecolor="none",
+        linewidth=0,
+        zorder=3,
+    )[0]
+    inner_w = max(outer_w - 2 * inset, outer_w * 0.55)
+    # Контур со всех сторон, но не ниже оси
+    bottom = min(inset, height * 0.06)
+    inner_h = max(height - 2 * bottom, height * 0.82)
+    ax.bar(
+        x,
+        inner_h,
+        width=inner_w,
+        bottom=bottom,
+        color=REST_COLOR,
+        edgecolor="none",
+        linewidth=0,
+        zorder=3.1,
+    )
+    return outer
+
+
 def _render_team_chart(
     users_series: list[tuple[str, dict[dt.date, DayEntry]]],
     title: str,
@@ -308,17 +345,20 @@ def _render_team_chart(
             height = _bar_display_height(
                 entry, rest_height=user_rest_heights[idx]
             )
-            color = _user_bar_color(base_color, entry)
 
-            bar = ax.bar(
-                x,
-                height,
-                width=bar_width * 0.92,
-                color=color,
-                edgecolor="white",
-                linewidth=0.6,
-                zorder=3,
-            )[0]
+            if entry.is_rest:
+                bar = _draw_rest_bar(ax, x, height, bar_width, base_color)
+            else:
+                color = _user_bar_color(base_color, entry)
+                bar = ax.bar(
+                    x,
+                    height,
+                    width=bar_width * 0.92,
+                    color=color,
+                    edgecolor="white",
+                    linewidth=0.6,
+                    zorder=3,
+                )[0]
             _annotate_team_bar(ax, bar, entry, base_color)
 
     _apply_day_axis_labels(ax, all_days)
@@ -331,7 +371,12 @@ def _render_team_chart(
         )
         for idx, (name, _) in enumerate(users_series)
     ]
-    rest_handle = Patch(facecolor=REST_COLOR, edgecolor=REST_COLOR, label="отдых")
+    rest_handle = Patch(
+        facecolor=REST_COLOR,
+        edgecolor=USER_COLORS[0],
+        linewidth=2.0,
+        label="отдых (контур = цвет участника)",
+    )
     ax.legend(
         handles=user_handles + [rest_handle],
         loc="upper right",
@@ -499,7 +544,7 @@ async def _load_users_breakthrough_series(
     users = await get_registered_users()
     dates_by_user: dict[int, set[dt.date]] = {uid: set() for uid, _ in users}
 
-    for user_id, _name, entry_date in await get_breakthroughs_for_year(year):
+    for user_id, _name, entry_date, _note in await get_breakthroughs_for_year(year):
         if user_id in dates_by_user:
             dates_by_user[user_id].add(entry_date)
 

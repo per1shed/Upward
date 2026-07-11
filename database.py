@@ -16,6 +16,7 @@ class DayEntry(NamedTuple):
     hours: float
     is_rest: bool
     is_breakthrough: bool = False
+    breakthrough_note: str = ""
 
 
 async def _ensure_is_rest_column(db: aiosqlite.Connection) -> None:
@@ -33,6 +34,15 @@ async def _ensure_is_breakthrough_column(db: aiosqlite.Connection) -> None:
     if "is_breakthrough" not in columns:
         await db.execute(
             "ALTER TABLE entries ADD COLUMN is_breakthrough INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+async def _ensure_breakthrough_note_column(db: aiosqlite.Connection) -> None:
+    cursor = await db.execute("PRAGMA table_info(entries)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "breakthrough_note" not in columns:
+        await db.execute(
+            "ALTER TABLE entries ADD COLUMN breakthrough_note TEXT NOT NULL DEFAULT ''"
         )
 
 
@@ -62,6 +72,7 @@ async def init_db() -> None:
         )
         await _ensure_is_rest_column(db)
         await _ensure_is_breakthrough_column(db)
+        await _ensure_breakthrough_note_column(db)
         await db.commit()
 
 
@@ -110,22 +121,30 @@ async def upsert_entry(
     *,
     is_rest: bool = False,
     is_breakthrough: bool = False,
+    breakthrough_note: str = "",
+    keep_existing_note: bool = False,
 ) -> None:
     now = dt.datetime.now(dt.timezone.utc).isoformat()
+    note = "" if not is_breakthrough else breakthrough_note
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             INSERT INTO entries (
                 user_id, entry_date, hours, display_name, updated_at,
-                is_rest, is_breakthrough
+                is_rest, is_breakthrough, breakthrough_note
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, entry_date) DO UPDATE SET
                 hours = excluded.hours,
                 display_name = excluded.display_name,
                 updated_at = excluded.updated_at,
                 is_rest = excluded.is_rest,
-                is_breakthrough = excluded.is_breakthrough
+                is_breakthrough = excluded.is_breakthrough,
+                breakthrough_note = CASE
+                    WHEN excluded.is_breakthrough = 0 THEN ''
+                    WHEN ? THEN entries.breakthrough_note
+                    ELSE excluded.breakthrough_note
+                END
             """,
             (
                 user_id,
@@ -135,16 +154,42 @@ async def upsert_entry(
                 now,
                 int(is_rest),
                 int(is_breakthrough),
+                note,
+                int(keep_existing_note and is_breakthrough),
             ),
         )
         await db.commit()
+
+
+async def set_breakthrough_note(
+    user_id: int,
+    entry_date: dt.date,
+    note: str,
+) -> bool:
+    """Сохраняет описание прорыва. False, если день не отмечен как прорыв."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE entries
+            SET breakthrough_note = ?, updated_at = ?
+            WHERE user_id = ? AND entry_date = ? AND is_breakthrough = 1
+            """,
+            (
+                note.strip(),
+                dt.datetime.now(dt.timezone.utc).isoformat(),
+                user_id,
+                entry_date.isoformat(),
+            ),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def get_entry(user_id: int, entry_date: dt.date) -> DayEntry | None:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
-            SELECT hours, is_rest, is_breakthrough FROM entries
+            SELECT hours, is_rest, is_breakthrough, breakthrough_note FROM entries
             WHERE user_id = ? AND entry_date = ?
             """,
             (user_id, entry_date.isoformat()),
@@ -152,7 +197,7 @@ async def get_entry(user_id: int, entry_date: dt.date) -> DayEntry | None:
         row = await cursor.fetchone()
     if not row:
         return None
-    return DayEntry(float(row[0]), bool(row[1]), bool(row[2]))
+    return DayEntry(float(row[0]), bool(row[1]), bool(row[2]), row[3] or "")
 
 
 async def entry_exists(user_id: int, entry_date: dt.date) -> bool:
@@ -190,7 +235,8 @@ async def get_month_entries(
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
-            SELECT entry_date, hours, is_rest, is_breakthrough FROM entries
+            SELECT entry_date, hours, is_rest, is_breakthrough, breakthrough_note
+            FROM entries
             WHERE user_id = ? AND entry_date LIKE ?
             """,
             (user_id, f"{prefix}%"),
@@ -198,31 +244,36 @@ async def get_month_entries(
         rows = await cursor.fetchall()
 
     result: dict[dt.date, DayEntry] = {}
-    for date_str, hours, is_rest, is_breakthrough in rows:
+    for date_str, hours, is_rest, is_breakthrough, note in rows:
         result[dt.date.fromisoformat(date_str)] = DayEntry(
-            float(hours), bool(is_rest), bool(is_breakthrough)
+            float(hours), bool(is_rest), bool(is_breakthrough), note or ""
         )
     return result
 
 
 async def get_breakthroughs_for_year(
     year: int,
-) -> list[tuple[int, str, dt.date]]:
-    """Все прорывные дни участников за год: (user_id, display_name, date)."""
+) -> list[tuple[int, str, dt.date, str]]:
+    """Прорывные дни за год: (user_id, display_name, date, note)."""
     prefix = f"{year:04d}-"
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
-            SELECT user_id, display_name, entry_date FROM entries
+            SELECT user_id, display_name, entry_date, breakthrough_note FROM entries
             WHERE entry_date LIKE ? AND is_breakthrough = 1
-            ORDER BY entry_date, display_name COLLATE NOCASE
+            ORDER BY display_name COLLATE NOCASE, entry_date
             """,
             (f"{prefix}%",),
         )
         rows = await cursor.fetchall()
     return [
-        (int(user_id), name or f"ID {user_id}", dt.date.fromisoformat(date_str))
-        for user_id, name, date_str in rows
+        (
+            int(user_id),
+            name or f"ID {user_id}",
+            dt.date.fromisoformat(date_str),
+            note or "",
+        )
+        for user_id, name, date_str, note in rows
     ]
 
 

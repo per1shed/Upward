@@ -58,7 +58,7 @@ def chart_nav_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="« Меню", callback_data="menu:home"))
     builder.row(
         InlineKeyboardButton(
-            text="⭐ Календарь прорывов",
+            text="⭐ Прорывы",
             callback_data=f"chart:breakthroughs:{year}",
         )
     )
@@ -92,6 +92,18 @@ def breakthrough_calendar_keyboard(year: int, month: int) -> InlineKeyboardMarku
 
 
 def time_prompt_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="😴 Отдых", callback_data="log:rest"),
+                InlineKeyboardButton(text="⭐ Прорыв", callback_data="log:breakthrough"),
+            ],
+            [InlineKeyboardButton(text="« Отмена", callback_data="menu:home")],
+        ]
+    )
+
+
+def cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="« Отмена", callback_data="menu:home")]

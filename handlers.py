@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from html import escape
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -10,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ChatAction
 from aiogram.types import CallbackQuery, Message, User
 
-from charts import build_breakthrough_year_calendar, build_team_progress_chart, chart_photo
+from charts import build_team_progress_chart, chart_photo
 from context import get_screen, set_screen
 from database import (
     DayEntry,
@@ -18,17 +19,21 @@ from database import (
     get_entry,
     get_registered_users,
     register_user,
+    set_breakthrough_note,
     upsert_entry,
 )
 from keyboards import (
     breakthrough_calendar_keyboard,
+    cancel_keyboard,
     chart_nav_keyboard,
     main_menu_keyboard,
     time_prompt_keyboard,
 )
-from texts import format_user_stats
+from texts import format_breakthroughs_list, format_user_stats
 from time_format import (
     BREAKTHROUGH_INPUT_HINT,
+    BREAKTHROUGH_NOTE_PROMPT,
+    MAX_BREAKTHROUGH_NOTE_LEN,
     MAX_MINUTES_PER_DAY,
     REST_INPUT_HINT,
     TIME_INPUT_HINT,
@@ -57,6 +62,7 @@ UNEXPECTED_TEXT_MSG = (
 
 class LogTime(StatesGroup):
     waiting_time = State()
+    waiting_breakthrough_note = State()
 
 
 _EXPIRED_CALLBACK_MARKERS = (
@@ -68,7 +74,6 @@ _EXPIRED_CALLBACK_MARKERS = (
 _MESSAGE_NOT_MODIFIED = "message is not modified"
 
 CHART_LOADING_TEXT = "📊 <b>График строится…</b> ⏳"
-BREAKTHROUGH_LOADING_TEXT = "⭐ <b>Календарь прорывов строится…</b> ⏳"
 
 
 async def safe_callback_answer(
@@ -149,20 +154,14 @@ async def send_team_chart(message: Message, year: int, month: int) -> None:
         await delete_message_safe(loading)
 
 
-async def send_breakthrough_calendar(
+async def send_breakthrough_list(
     message: Message, year: int, month: int
 ) -> None:
-    loading = await message.answer(BREAKTHROUGH_LOADING_TEXT)
-    try:
-        await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
-        png, caption = await build_breakthrough_year_calendar(year)
-        await message.answer_photo(
-            chart_photo(png, "breakthroughs.png"),
-            caption=caption,
-            reply_markup=breakthrough_calendar_keyboard(year, month),
-        )
-    finally:
-        await delete_message_safe(loading)
+    text = await format_breakthroughs_list(year)
+    await message.answer(
+        text,
+        reply_markup=breakthrough_calendar_keyboard(year, month),
+    )
 
 
 async def send_full_statistics(message: Message, user_id: int) -> None:
@@ -342,36 +341,11 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
     name = display_name_from_user(message.from_user)
 
     if parse_rest_input(text):
-        await upsert_entry(
-            user_id, today, 0.0, name, is_rest=True, is_breakthrough=False
-        )
-        await state.clear()
-        set_screen(user_id, "menu")
-        await message.answer(
-            f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день отдыха</b>."
-        )
-        await send_team_chart(message, today.year, today.month)
+        await _mark_rest_day(message, state, user_id, today, name)
         return
 
     if parse_breakthrough_input(text):
-        existing = await get_entry(user_id, today)
-        hours = existing.hours if existing and existing.hours > 0 else 0.0
-        await upsert_entry(
-            user_id, today, hours, name, is_rest=False, is_breakthrough=True
-        )
-        await state.clear()
-        set_screen(user_id, "menu")
-        if hours > 0:
-            result = (
-                f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
-                f"<b>день прорыва</b> ⭐ · <b>{format_duration(hours)}</b>"
-            )
-        else:
-            result = (
-                f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день прорыва</b> ⭐"
-            )
-        await message.answer(result)
-        await send_team_chart(message, today.year, today.month)
+        await _start_breakthrough(message, state, user_id, today, name)
         return
 
     parsed = parse_time_input(text)
@@ -406,6 +380,7 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         name,
         is_rest=False,
         is_breakthrough=keep_breakthrough,
+        keep_existing_note=keep_breakthrough,
     )
     await state.clear()
     set_screen(user_id, "menu")
@@ -430,6 +405,157 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
     await send_team_chart(message, today.year, today.month)
 
 
+async def _mark_rest_day(
+    message: Message,
+    state: FSMContext,
+    user_id: int,
+    today: dt.date,
+    name: str,
+) -> None:
+    await upsert_entry(
+        user_id, today, 0.0, name, is_rest=True, is_breakthrough=False
+    )
+    await state.clear()
+    set_screen(user_id, "menu")
+    await message.answer(
+        f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день отдыха</b>."
+    )
+    await send_team_chart(message, today.year, today.month)
+
+
+async def _start_breakthrough(
+    message: Message,
+    state: FSMContext,
+    user_id: int,
+    today: dt.date,
+    name: str,
+) -> None:
+    existing = await get_entry(user_id, today)
+    hours = existing.hours if existing and existing.hours > 0 else 0.0
+    await upsert_entry(
+        user_id,
+        today,
+        hours,
+        name,
+        is_rest=False,
+        is_breakthrough=True,
+        breakthrough_note="",
+    )
+    await state.update_data(entry_date=today.isoformat())
+    await state.set_state(LogTime.waiting_breakthrough_note)
+    set_screen(user_id, "log")
+    await message.answer(
+        BREAKTHROUGH_NOTE_PROMPT,
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.callback_query(LogTime.waiting_time, F.data == "log:rest")
+async def log_rest_button(callback: CallbackQuery, state: FSMContext) -> None:
+    await safe_callback_answer(callback)
+    user_id = await ensure_user_callback(callback)
+    if user_id is None or not callback.message or not callback.from_user:
+        return
+
+    today = today_local()
+    data = await state.get_data()
+    entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
+    if entry_date != today:
+        await state.clear()
+        await callback.message.answer(
+            "Отметить можно только сегодня. Нажмите «✅отметить» снова.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    name = display_name_from_user(callback.from_user)
+    await _mark_rest_day(callback.message, state, user_id, today, name)
+
+
+@router.callback_query(LogTime.waiting_time, F.data == "log:breakthrough")
+async def log_breakthrough_button(callback: CallbackQuery, state: FSMContext) -> None:
+    await safe_callback_answer(callback)
+    user_id = await ensure_user_callback(callback)
+    if user_id is None or not callback.message or not callback.from_user:
+        return
+
+    today = today_local()
+    data = await state.get_data()
+    entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
+    if entry_date != today:
+        await state.clear()
+        await callback.message.answer(
+            "Отметить можно только сегодня. Нажмите «✅отметить» снова.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    name = display_name_from_user(callback.from_user)
+    await _start_breakthrough(callback.message, state, user_id, today, name)
+
+
+@router.message(LogTime.waiting_breakthrough_note)
+async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
+    user_id = await ensure_user(message)
+    if user_id is None:
+        return
+
+    today = today_local()
+    data = await state.get_data()
+    entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
+    if entry_date != today:
+        await state.clear()
+        await message.answer(
+            "Описать прорыв можно только за сегодня. Нажмите «✅отметить» снова.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    note = (message.text or "").strip()
+    if not note:
+        await message.answer(
+            "Описание не должно быть пустым.\n\n" + BREAKTHROUGH_NOTE_PROMPT,
+            reply_markup=cancel_keyboard(),
+        )
+        return
+    if len(note) > MAX_BREAKTHROUGH_NOTE_LEN:
+        await message.answer(
+            f"Слишком длинно: максимум {MAX_BREAKTHROUGH_NOTE_LEN} символов.\n\n"
+            + BREAKTHROUGH_NOTE_PROMPT,
+            reply_markup=cancel_keyboard(),
+        )
+        return
+
+    saved = await set_breakthrough_note(user_id, today, note)
+    await state.clear()
+    set_screen(user_id, "menu")
+
+    if not saved:
+        await message.answer(
+            "Не удалось сохранить описание: день прорыва не найден.\n"
+            "Отметьте прорыв снова через «✅отметить».",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    note_safe = escape(note)
+    entry = await get_entry(user_id, today)
+    hours = entry.hours if entry else 0.0
+    if hours > 0:
+        result = (
+            f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
+            f"<b>день прорыва</b> ⭐ · <b>{format_duration(hours)}</b>\n"
+            f"Описание: <i>{note_safe}</i>"
+        )
+    else:
+        result = (
+            f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день прорыва</b> ⭐\n"
+            f"Описание: <i>{note_safe}</i>"
+        )
+    await message.answer(result)
+    await send_team_chart(message, today.year, today.month)
+
+
 @router.callback_query(F.data == "menu:stats")
 async def menu_stats(callback: CallbackQuery) -> None:
     await safe_callback_answer(callback, "📊 Строим статистику…")
@@ -442,7 +568,7 @@ async def menu_stats(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("chart:breakthroughs:"))
 async def chart_breakthroughs(callback: CallbackQuery) -> None:
-    await safe_callback_answer(callback, "⭐ Строим календарь…")
+    await safe_callback_answer(callback)
     viewer_id = await ensure_user_callback(callback)
     if viewer_id is None:
         return
@@ -454,7 +580,7 @@ async def chart_breakthroughs(callback: CallbackQuery) -> None:
     set_screen(viewer_id, "stats", chart_year=year, chart_month=month)
 
     if callback.message:
-        await send_breakthrough_calendar(callback.message, year, month)
+        await send_breakthrough_list(callback.message, year, month)
 
 
 @router.callback_query(F.data.startswith("chart:nav:"))
@@ -480,7 +606,11 @@ async def unexpected_text(message: Message, state: FSMContext) -> None:
     if message.text.startswith("/"):
         return
 
-    if await state.get_state() == LogTime.waiting_time:
+    current_state = await state.get_state()
+    if current_state in {
+        LogTime.waiting_time.state,
+        LogTime.waiting_breakthrough_note.state,
+    }:
         return
 
     user_id = await ensure_user(message)
