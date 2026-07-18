@@ -35,7 +35,6 @@ MUTED = "#8E8E93"
 GRID = "#D8D8DC"
 GOAL_LINE_COLOR = "#5C5C60"
 GOAL_HOURS = 4.0
-Y_MAX_DEFAULT = 8.0
 REST_MARKER_HEIGHT = 0.55
 
 USER_COLORS = (
@@ -83,6 +82,13 @@ def _day_is_marked(entry: DayEntry) -> bool:
     return entry.is_rest or entry.is_breakthrough or entry.hours > 0
 
 
+def _y_axis_top(max_hours: float) -> float:
+    """Верх оси: на 1 час выше максимума отмеченного времени."""
+    if max_hours <= 0:
+        return 1.0
+    return max_hours + 1.0
+
+
 def _month_total_hours(
     entries: dict[dt.date, DayEntry], all_days: list[dt.date]
 ) -> float:
@@ -108,7 +114,7 @@ def _apply_day_axis_labels(ax, all_days: list[dt.date]) -> None:
     day_numbers = [day.day for day in all_days]
     ax.set_xticks(day_numbers)
     ax.set_xticklabels([])
-    ax.tick_params(axis="x", pad=2, length=0)
+    ax.tick_params(axis="x", pad=2, length=3, width=0.8, color=GRID)
 
     for day in all_days:
         color = WEEKEND_LABEL_COLOR if day.weekday() >= 5 else MUTED
@@ -137,9 +143,16 @@ def _apply_day_axis_labels(ax, all_days: list[dt.date]) -> None:
 
 
 def _style_calm_axes(ax) -> None:
-    for spine in ("top", "right", "left", "bottom"):
-        ax.spines[spine].set_visible(False)
-    ax.tick_params(axis="y", colors=MUTED, labelsize=9, length=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(True)
+    ax.spines["bottom"].set_visible(True)
+    ax.spines["left"].set_color(GRID)
+    ax.spines["bottom"].set_color(GRID)
+    ax.spines["left"].set_linewidth(1.0)
+    ax.spines["bottom"].set_linewidth(1.0)
+    ax.tick_params(axis="y", colors=MUTED, labelsize=9, length=3, width=0.8, color=GRID)
+    ax.tick_params(axis="x", colors=MUTED, length=3, width=0.8, color=GRID)
     _apply_y_grid(ax)
 
 
@@ -199,6 +212,33 @@ def _annotate_breakthrough(ax, x: float, height: float, color: str) -> None:
     )
 
 
+def _annotate_day_leader_hours(
+    ax,
+    x: float,
+    height: float,
+    hours: float,
+    color: str,
+    *,
+    is_breakthrough: bool,
+) -> None:
+    """Подпись H:MM у самого продуктивного за день."""
+    label_y = height + 0.06
+    if is_breakthrough:
+        _annotate_breakthrough(ax, x, height, color)
+        label_y = height + 0.38
+    ax.text(
+        x,
+        label_y,
+        format_duration_clock(hours),
+        ha="center",
+        va="bottom",
+        fontsize=7,
+        fontweight="medium",
+        color=color,
+        zorder=5,
+    )
+
+
 def _render_single_chart(
     entries: dict[dt.date, DayEntry],
     title: str,
@@ -211,17 +251,12 @@ def _render_single_chart(
     day_entries = [_entry_for_day(entries, day) for day in all_days]
     total_month = sum(e.hours for e in day_entries)
 
-    values: list[float] = []
-    for entry in day_entries:
-        if entry.is_rest:
-            values.append(REST_MARKER_HEIGHT)
-        elif entry.is_breakthrough and entry.hours <= 0:
-            values.append(REST_MARKER_HEIGHT)
-        else:
-            values.append(entry.hours)
-    max_value = max(values) if values else 1.0
+    max_value = max(
+        (e.hours for e in day_entries if e.hours > 0 and not e.is_rest),
+        default=0.0,
+    )
 
-    fig, ax = plt.subplots(figsize=(max(14.0, last_day * 0.48), 5.2))
+    fig, ax = plt.subplots(figsize=(max(14.0, last_day * 0.48), 7.5))
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
 
@@ -236,7 +271,7 @@ def _render_single_chart(
 
     ax.set_ylabel("Время (часы)", fontsize=11, color=MUTED)
     ax.set_xlim(0.2, last_day + 0.8)
-    ax.set_ylim(0, max(Y_MAX_DEFAULT, max_value * 1.15))
+    ax.set_ylim(0, _y_axis_top(max_value))
     _style_calm_axes(ax)
     ax.axhline(
         GOAL_HOURS,
@@ -311,7 +346,7 @@ def _render_team_chart(
     all_days = [dt.date(year, month, day) for day in range(1, last_day + 1)]
     day_numbers = np.arange(1, last_day + 1)
 
-    fig, ax = plt.subplots(figsize=(max(14.0, last_day * 0.5), 5.2))
+    fig, ax = plt.subplots(figsize=(max(14.0, last_day * 0.5), 7.5))
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
 
@@ -325,7 +360,7 @@ def _render_team_chart(
 
     ax.set_ylabel("Время (часы)", fontsize=11, color=MUTED, labelpad=8)
     ax.set_xlim(0.2, last_day + 0.8)
-    ax.set_ylim(0, max(Y_MAX_DEFAULT, max_value * 1.15))
+    ax.set_ylim(0, _y_axis_top(max_value))
     _style_calm_axes(ax)
     ax.axhline(
         GOAL_HOURS,
@@ -346,6 +381,16 @@ def _render_team_chart(
             continue
 
         bar_width = group_width / len(marked)
+        # Лидер дня — максимальное продуктивное время (при ничьей — первый в порядке регистрации)
+        leader_slot: int | None = None
+        leader_hours = -1.0
+        for slot, (_idx, entry) in enumerate(marked):
+            if entry.is_rest or entry.hours <= 0:
+                continue
+            if entry.hours > leader_hours:
+                leader_hours = entry.hours
+                leader_slot = slot
+
         for slot, (idx, entry) in enumerate(marked):
             offset = (slot - (len(marked) - 1) / 2) * bar_width
             x = float(day_num + offset)
@@ -365,7 +410,16 @@ def _render_team_chart(
                 zorder=3,
                 alpha=0.95,
             )
-            if entry.is_breakthrough:
+            if slot == leader_slot:
+                _annotate_day_leader_hours(
+                    ax,
+                    x,
+                    height,
+                    entry.hours,
+                    base_color,
+                    is_breakthrough=entry.is_breakthrough,
+                )
+            elif entry.is_breakthrough:
                 _annotate_breakthrough(ax, x, height, base_color)
 
     _apply_day_axis_labels(ax, all_days)
