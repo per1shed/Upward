@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Patch, Rectangle
+from matplotlib.patches import FancyBboxPatch, Patch, Rectangle
 
 from database import (
     DayEntry,
@@ -28,15 +28,31 @@ from time_format import format_duration, format_duration_clock
 if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile
 
-USER_COLORS = ("#5B8DEF", "#E85D4E", "#3CB371", "#F4A460", "#9B59B6", "#1ABC9C")
+# Apple-calm palette (командный график)
+BG = "#F7F7F8"
+INK = "#1D1D1F"
+MUTED = "#8E8E93"
+GRID = "#D8D8DC"
+GOAL_LINE_COLOR = "#5C5C60"
+GOAL_HOURS = 4.0
+Y_MAX_DEFAULT = 8.0
+REST_MARKER_HEIGHT = 0.55
+
+USER_COLORS = (
+    "#4A6FA5",  # steel blue
+    "#3A3A3C",  # charcoal
+    "#5B9A8B",  # muted teal
+    "#C48B7A",  # dusty rose
+    "#7A8BB8",  # soft indigo
+    "#A3926B",  # warm sand
+)
 EMPTY_COLOR = "#D8DEE9"
-PRODUCTIVE_COLOR = "#5B8DEF"
-HIGHLIGHT_COLOR = "#E85D4E"
-# Мягкий шалфейно-мятный — ассоциация с отдыхом и восстановлением
-REST_COLOR = "#73C6A8"
+PRODUCTIVE_COLOR = USER_COLORS[0]
+HIGHLIGHT_COLOR = "#C97B72"
+REST_COLOR = "#8FA4C1"
 WEEKDAY_ABBR = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
-WEEKDAY_LABEL_COLOR = "#222222"
-WEEKEND_LABEL_COLOR = "#E85D4E"
+WEEKDAY_LABEL_COLOR = MUTED
+WEEKEND_LABEL_COLOR = "#C97B72"
 BREAKTHROUGH_CELL_COLOR = "#FFF8E1"
 EMPTY_USER_BLEND = 0.78
 
@@ -53,7 +69,7 @@ def _pale_user_color(base_color: str) -> str:
 def _apply_y_grid(ax) -> None:
     """Горизонтальная сетка на заднем плане, под столбцами."""
     ax.set_axisbelow(True)
-    ax.grid(axis="y", linestyle="--", alpha=0.35, color="#BBBBBB", zorder=0)
+    ax.grid(axis="y", linestyle=":", linewidth=0.9, color=GRID, zorder=0)
 
 
 def _entry_for_day(
@@ -62,65 +78,15 @@ def _entry_for_day(
     return entries.get(day, DayEntry(0.0, False, False))
 
 
-def _max_productive_hours(entries: list[DayEntry]) -> float:
-    """Максимальная высота среди отмеченных продуктивных дней."""
-    return max(
-        (e.hours for e in entries if e.hours > 0 and not e.is_rest),
-        default=0.0,
-    )
-
-
-def _bar_display_height(entry: DayEntry, *, rest_height: float) -> float:
-    if entry.is_rest:
-        return rest_height if rest_height > 0 else 1.0
-    if entry.is_breakthrough and entry.hours <= 0:
-        return rest_height if rest_height > 0 else 1.0
-    return entry.hours
-
-
 def _day_is_marked(entry: DayEntry) -> bool:
     """День считается отмеченным, если есть время, отдых или прорыв."""
     return entry.is_rest or entry.is_breakthrough or entry.hours > 0
 
 
-def _annotate_team_bar(ax, bar, entry: DayEntry, base_color: str) -> None:
-    cx = bar.get_x() + bar.get_width() / 2
-    if entry.is_breakthrough:
-        ax.text(
-            cx,
-            bar.get_height(),
-            "★",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            fontweight="bold",
-            color=base_color,
-            zorder=4,
-        )
-    if entry.is_rest or entry.hours <= 0:
-        return
-    label_y = bar.get_height() * 0.45 if entry.is_breakthrough else bar.get_height()
-    label_va = "center" if entry.is_breakthrough else "bottom"
-    ax.text(
-        cx,
-        label_y,
-        format_duration_clock(entry.hours),
-        ha="center",
-        va=label_va,
-        fontsize=7,
-        fontweight="bold",
-        color="#222222",
-        zorder=4,
-    )
-
-
-def _user_bar_color(base_color: str, entry: DayEntry) -> str | tuple:
-    """Отдых — цвет восстановления; продуктивность/прорыв — цвет участника."""
-    if entry.is_rest:
-        return REST_COLOR
-    if entry.is_breakthrough or entry.hours > 0:
-        return base_color
-    return _pale_user_color(base_color)
+def _month_total_hours(
+    entries: dict[dt.date, DayEntry], all_days: list[dt.date]
+) -> float:
+    return sum(_entry_for_day(entries, day).hours for day in all_days)
 
 
 def _day_bar_color(
@@ -138,19 +104,29 @@ def _day_bar_color(
 
 
 def _apply_day_axis_labels(ax, all_days: list[dt.date]) -> None:
-    """Число дня на оси, под ним день недели, ниже — подпись оси."""
+    """День недели на оси, под ним число месяца."""
     day_numbers = [day.day for day in all_days]
     ax.set_xticks(day_numbers)
-    ax.set_xticklabels(day_numbers, fontsize=8, color=WEEKDAY_LABEL_COLOR)
-    ax.tick_params(axis="x", pad=2)
+    ax.set_xticklabels([])
+    ax.tick_params(axis="x", pad=2, length=0)
 
-    for day_num, day_date in zip(day_numbers, all_days):
-        weekday = day_date.weekday()
-        color = WEEKEND_LABEL_COLOR if weekday >= 5 else WEEKDAY_LABEL_COLOR
+    for day in all_days:
+        color = WEEKEND_LABEL_COLOR if day.weekday() >= 5 else MUTED
         ax.text(
-            day_num,
-            -0.06,
-            WEEKDAY_ABBR[weekday],
+            day.day,
+            -0.02,
+            WEEKDAY_ABBR[day.weekday()],
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=8,
+            color=color,
+            clip_on=False,
+        )
+        ax.text(
+            day.day,
+            -0.085,
+            str(day.day),
             transform=ax.get_xaxis_transform(),
             ha="center",
             va="top",
@@ -159,16 +135,67 @@ def _apply_day_axis_labels(ax, all_days: list[dt.date]) -> None:
             clip_on=False,
         )
 
+
+def _style_calm_axes(ax) -> None:
+    for spine in ("top", "right", "left", "bottom"):
+        ax.spines[spine].set_visible(False)
+    ax.tick_params(axis="y", colors=MUTED, labelsize=9, length=0)
+    _apply_y_grid(ax)
+
+
+def _draw_rest_marker(ax, x: float, bar_width: float, user_color: str) -> None:
+    """
+    Личный отдых в слоте участника: короткий штрихованный маркер + точка.
+    Не перекрывает чужие столбцы того же дня.
+    """
+    w = bar_width * 0.85
+    bottom = 0.04
+    ax.add_patch(
+        FancyBboxPatch(
+            (x - w / 2, bottom),
+            w,
+            REST_MARKER_HEIGHT,
+            boxstyle="round,pad=0.01,rounding_size=0.12",
+            linewidth=0,
+            facecolor=user_color,
+            alpha=0.22,
+            zorder=3,
+        )
+    )
+    ax.bar(
+        x,
+        REST_MARKER_HEIGHT,
+        width=w,
+        bottom=bottom,
+        facecolor="none",
+        edgecolor=user_color,
+        linewidth=1.0,
+        hatch="////",
+        alpha=0.85,
+        zorder=4,
+    )
+    ax.plot(
+        [x],
+        [bottom + REST_MARKER_HEIGHT / 2],
+        marker="o",
+        markersize=3.2,
+        color=user_color,
+        alpha=0.9,
+        zorder=5,
+    )
+
+
+def _annotate_breakthrough(ax, x: float, height: float, color: str) -> None:
     ax.text(
-        0.5,
-        -0.16,
-        "День месяца",
-        transform=ax.transAxes,
+        x,
+        height + 0.08,
+        "★",
         ha="center",
-        va="top",
-        fontsize=11,
-        color=WEEKDAY_LABEL_COLOR,
-        clip_on=False,
+        va="bottom",
+        fontsize=9,
+        fontweight="bold",
+        color=color,
+        zorder=5,
     )
 
 
@@ -183,13 +210,20 @@ def _render_single_chart(
     all_days = [dt.date(year, month, day) for day in range(1, last_day + 1)]
     day_entries = [_entry_for_day(entries, day) for day in all_days]
     total_month = sum(e.hours for e in day_entries)
-    rest_height = _max_productive_hours(day_entries)
-    values = [_bar_display_height(e, rest_height=rest_height) for e in day_entries]
+
+    values: list[float] = []
+    for entry in day_entries:
+        if entry.is_rest:
+            values.append(REST_MARKER_HEIGHT)
+        elif entry.is_breakthrough and entry.hours <= 0:
+            values.append(REST_MARKER_HEIGHT)
+        else:
+            values.append(entry.hours)
     max_value = max(values) if values else 1.0
 
-    fig, ax = plt.subplots(figsize=(max(12, last_day * 0.38), 5.5))
-    fig.patch.set_facecolor("#FAFAFA")
-    ax.set_facecolor("#FAFAFA")
+    fig, ax = plt.subplots(figsize=(max(14.0, last_day * 0.48), 5.2))
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
 
     day_numbers = list(range(1, last_day + 1))
     colors = [
@@ -200,94 +234,71 @@ def _render_single_chart(
         for i, day in enumerate(all_days)
     ]
 
-    ax.set_ylabel("Время (часы)", fontsize=11)
-    ax.set_xlim(0.4, last_day + 0.6)
-    ax.set_ylim(0, max(max_value * 1.3, 1.0))
-    _apply_y_grid(ax)
-
-    bars = ax.bar(
-        day_numbers,
-        values,
-        color=colors,
-        width=0.72,
-        edgecolor="white",
-        zorder=3,
+    ax.set_ylabel("Время (часы)", fontsize=11, color=MUTED)
+    ax.set_xlim(0.2, last_day + 0.8)
+    ax.set_ylim(0, max(Y_MAX_DEFAULT, max_value * 1.15))
+    _style_calm_axes(ax)
+    ax.axhline(
+        GOAL_HOURS,
+        color=GOAL_LINE_COLOR,
+        linewidth=1.2,
+        solid_capstyle="round",
+        zorder=2,
     )
+
+    for day_num, entry, color in zip(day_numbers, day_entries, colors):
+        if entry.is_rest:
+            _draw_rest_marker(ax, day_num, 0.72, PRODUCTIVE_COLOR)
+            continue
+        if not _day_is_marked(entry):
+            ax.bar(
+                day_num,
+                0.12,
+                width=0.55,
+                color=EMPTY_COLOR,
+                edgecolor="none",
+                zorder=2,
+                alpha=0.5,
+            )
+            continue
+        height = entry.hours if entry.hours > 0 else REST_MARKER_HEIGHT
+        ax.bar(
+            day_num,
+            height,
+            width=0.62,
+            color=color,
+            edgecolor="none",
+            zorder=3,
+            alpha=0.95,
+        )
+        if entry.is_breakthrough:
+            _annotate_breakthrough(ax, day_num, height, color)
+
     _apply_day_axis_labels(ax, all_days)
 
-    for bar, day, entry in zip(bars, all_days, day_entries):
-        if entry.is_rest or entry.hours <= 0:
-            continue
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height(),
-            format_duration_clock(entry.hours),
-            ha="center",
-            va="bottom",
-            fontsize=8,
-            fontweight="bold",
-            color="#222222",
-            zorder=4,
-        )
-
-    legend_handles = [
-        Patch(facecolor=PRODUCTIVE_COLOR, edgecolor="white", label="продуктивность"),
-        Patch(facecolor=REST_COLOR, edgecolor="white", label="отдых"),
-        Patch(facecolor=EMPTY_COLOR, edgecolor="white", label="нет записи"),
-    ]
-    ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.9)
-
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
-    month_total = (
-        f"Итого за месяц: {format_duration(total_month)}"
-        if total_month > 0
-        else "Итого за месяц: 0ч"
+    fig.text(
+        0.5,
+        0.94,
+        title,
+        ha="center",
+        va="top",
+        fontsize=14,
+        fontweight="semibold",
+        color=INK,
     )
-    fig.text(0.5, 0.02, month_total, ha="center", fontsize=10, color="#444444")
+    month_total = (
+        f"Итого: {format_duration(total_month)}"
+        if total_month > 0
+        else "Итого: 0ч"
+    )
+    fig.text(0.5, 0.885, month_total, ha="center", va="top", fontsize=11, color=MUTED)
 
     buf = io.BytesIO()
-    plt.tight_layout(rect=[0, 0.11, 1, 1])
-    fig.savefig(buf, format="png", dpi=140)
+    fig.subplots_adjust(left=0.05, right=0.985, top=0.80, bottom=0.14)
+    fig.savefig(buf, format="png", dpi=160, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf.read()
-
-
-def _draw_rest_bar(
-    ax,
-    x: float,
-    height: float,
-    bar_width: float,
-    user_color: str,
-):
-    """Бирюзовый отдых с контуром цвета участника строго внутри столбца."""
-    outer_w = bar_width * 0.92
-    # Контур = внешний слой цвета пользователя, заливка чуть меньше внутри
-    inset = min(outer_w * 0.14, 0.06)
-    outer = ax.bar(
-        x,
-        height,
-        width=outer_w,
-        color=user_color,
-        edgecolor="none",
-        linewidth=0,
-        zorder=3,
-    )[0]
-    inner_w = max(outer_w - 2 * inset, outer_w * 0.55)
-    # Контур со всех сторон, но не ниже оси
-    bottom = min(inset, height * 0.06)
-    inner_h = max(height - 2 * bottom, height * 0.82)
-    ax.bar(
-        x,
-        inner_h,
-        width=inner_w,
-        bottom=bottom,
-        color=REST_COLOR,
-        edgecolor="none",
-        linewidth=0,
-        zorder=3.1,
-    )
-    return outer
 
 
 def _render_team_chart(
@@ -300,32 +311,29 @@ def _render_team_chart(
     all_days = [dt.date(year, month, day) for day in range(1, last_day + 1)]
     day_numbers = np.arange(1, last_day + 1)
 
-    fig, ax = plt.subplots(figsize=(max(12, last_day * 0.42), 6))
-    fig.patch.set_facecolor("#FAFAFA")
-    ax.set_facecolor("#FAFAFA")
+    fig, ax = plt.subplots(figsize=(max(14.0, last_day * 0.5), 5.2))
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
 
-    group_width = 0.82
-
-    user_rest_heights = [
-        _max_productive_hours([_entry_for_day(entries, day) for day in all_days])
-        for _name, entries in users_series
-    ]
-
+    group_width = 0.72
     max_value = 0.0
     for day in all_days:
-        for idx, (_name, entries) in enumerate(users_series):
+        for _name, entries in users_series:
             entry = _entry_for_day(entries, day)
-            if not _day_is_marked(entry):
-                continue
-            height = _bar_display_height(
-                entry, rest_height=user_rest_heights[idx]
-            )
-            max_value = max(max_value, height)
+            if entry.hours > 0 and not entry.is_rest:
+                max_value = max(max_value, entry.hours)
 
-    ax.set_ylabel("Время (часы)", fontsize=11)
-    ax.set_xlim(0.4, last_day + 0.6)
-    ax.set_ylim(0, max(max_value * 1.35, 1.0))
-    _apply_y_grid(ax)
+    ax.set_ylabel("Время (часы)", fontsize=11, color=MUTED, labelpad=8)
+    ax.set_xlim(0.2, last_day + 0.8)
+    ax.set_ylim(0, max(Y_MAX_DEFAULT, max_value * 1.15))
+    _style_calm_axes(ax)
+    ax.axhline(
+        GOAL_HOURS,
+        color=GOAL_LINE_COLOR,
+        linewidth=1.3,
+        solid_capstyle="round",
+        zorder=2,
+    )
 
     for day_num, day in zip(day_numbers, all_days):
         marked: list[tuple[int, DayEntry]] = []
@@ -340,60 +348,64 @@ def _render_team_chart(
         bar_width = group_width / len(marked)
         for slot, (idx, entry) in enumerate(marked):
             offset = (slot - (len(marked) - 1) / 2) * bar_width
-            x = day_num + offset
+            x = float(day_num + offset)
             base_color = USER_COLORS[idx % len(USER_COLORS)]
-            height = _bar_display_height(
-                entry, rest_height=user_rest_heights[idx]
-            )
 
             if entry.is_rest:
-                bar = _draw_rest_bar(ax, x, height, bar_width, base_color)
-            else:
-                color = _user_bar_color(base_color, entry)
-                bar = ax.bar(
-                    x,
-                    height,
-                    width=bar_width * 0.92,
-                    color=color,
-                    edgecolor="white",
-                    linewidth=0.6,
-                    zorder=3,
-                )[0]
-            _annotate_team_bar(ax, bar, entry, base_color)
+                _draw_rest_marker(ax, x, bar_width, base_color)
+                continue
+
+            height = entry.hours if entry.hours > 0 else REST_MARKER_HEIGHT
+            ax.bar(
+                x,
+                height,
+                width=bar_width * 0.85,
+                color=base_color,
+                edgecolor="none",
+                zorder=3,
+                alpha=0.95,
+            )
+            if entry.is_breakthrough:
+                _annotate_breakthrough(ax, x, height, base_color)
 
     _apply_day_axis_labels(ax, all_days)
 
-    user_handles = [
-        Patch(
-            facecolor=USER_COLORS[idx % len(USER_COLORS)],
-            edgecolor=USER_COLORS[idx % len(USER_COLORS)],
-            label=name,
-        )
-        for idx, (name, _) in enumerate(users_series)
-    ]
-    rest_handle = Patch(
-        facecolor=REST_COLOR,
-        edgecolor=USER_COLORS[0],
-        linewidth=2.0,
-        label="отдых (контур = цвет участника)",
+    fig.text(
+        0.5,
+        0.94,
+        title,
+        ha="center",
+        va="top",
+        fontsize=15,
+        fontweight="semibold",
+        color=INK,
     )
-    ax.legend(
-        handles=user_handles + [rest_handle],
-        loc="upper right",
-        fontsize=9,
-        framealpha=0.9,
-    )
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
 
     totals = [
-        f"{name}: {format_duration(sum(_entry_for_day(entries, d).hours for d in all_days))}"
-        for name, entries in users_series
+        (
+            name,
+            idx,
+            _month_total_hours(entries, all_days),
+        )
+        for idx, (name, entries) in enumerate(users_series)
     ]
-    fig.text(0.5, 0.02, " · ".join(totals), ha="center", fontsize=9, color="#444444")
+    n = len(totals)
+    for i, (name, idx, total_h) in enumerate(totals):
+        x = 0.08 + (i + 0.5) * (0.84 / n) if n else 0.5
+        fig.text(
+            x,
+            0.875,
+            f"{name}: {format_duration(total_h)}",
+            ha="center",
+            va="top",
+            fontsize=11,
+            fontweight="medium",
+            color=USER_COLORS[idx % len(USER_COLORS)],
+        )
 
     buf = io.BytesIO()
-    plt.tight_layout(rect=[0, 0.12, 1, 1])
-    fig.savefig(buf, format="png", dpi=140)
+    fig.subplots_adjust(left=0.05, right=0.985, top=0.78, bottom=0.14)
+    fig.savefig(buf, format="png", dpi=160, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf.read()
@@ -409,10 +421,10 @@ def _draw_month_breakthrough_calendar(
     ax.set_ylim(0, 7)
     ax.invert_yaxis()
     ax.axis("off")
-    ax.set_title(MONTH_NAMES[month], fontsize=14, fontweight="bold", pad=8)
+    ax.set_title(MONTH_NAMES[month], fontsize=14, fontweight="bold", pad=8, color=INK)
 
     for col, abbr in enumerate(WEEKDAY_ABBR):
-        wd_color = WEEKEND_LABEL_COLOR if col >= 5 else WEEKDAY_LABEL_COLOR
+        wd_color = WEEKEND_LABEL_COLOR if col >= 5 else MUTED
         ax.text(
             col + 0.5,
             0.35,
@@ -443,12 +455,12 @@ def _draw_month_breakthrough_calendar(
                     1,
                     1,
                     facecolor=BREAKTHROUGH_CELL_COLOR if marked else "#FFFFFF",
-                    edgecolor="#C8C8C8",
+                    edgecolor=GRID,
                     linewidth=1.0,
                 )
             )
 
-            day_color = WEEKEND_LABEL_COLOR if col >= 5 else WEEKDAY_LABEL_COLOR
+            day_color = WEEKEND_LABEL_COLOR if col >= 5 else INK
             ax.text(
                 col + 0.5,
                 row + 0.38,
@@ -479,7 +491,7 @@ def _render_year_breakthrough_calendar(
     users_series: list[tuple[str, str, set[dt.date]]],
 ) -> bytes:
     fig, axes = plt.subplots(4, 3, figsize=(22, 28))
-    fig.patch.set_facecolor("#FAFAFA")
+    fig.patch.set_facecolor(BG)
 
     total_days = sum(len(dates) for _n, _c, dates in users_series)
     fig.suptitle(
@@ -487,11 +499,12 @@ def _render_year_breakthrough_calendar(
         fontsize=22,
         fontweight="bold",
         y=0.985,
+        color=INK,
     )
 
     for month in range(1, 13):
         ax = axes[(month - 1) // 3, (month - 1) % 3]
-        ax.set_facecolor("#FAFAFA")
+        ax.set_facecolor(BG)
         _draw_month_breakthrough_calendar(ax, year, month, users_series)
 
     if users_series:
@@ -520,7 +533,7 @@ def _render_year_breakthrough_calendar(
             "Прорывных дней за год пока нет",
             ha="center",
             fontsize=13,
-            color="#666666",
+            color=MUTED,
         )
 
     subtitle = (
@@ -528,11 +541,11 @@ def _render_year_breakthrough_calendar(
         if total_days
         else "Отметьте прорыв через «✅отметить» — слово «прорыв»"
     )
-    fig.text(0.5, 0.045, subtitle, ha="center", fontsize=12, color="#444444")
+    fig.text(0.5, 0.045, subtitle, ha="center", fontsize=12, color=MUTED)
 
     buf = io.BytesIO()
     plt.tight_layout(rect=[0, 0.07, 1, 0.965], h_pad=2.8, w_pad=1.8)
-    fig.savefig(buf, format="png", dpi=150)
+    fig.savefig(buf, format="png", dpi=150, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf.read()
