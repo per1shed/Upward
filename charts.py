@@ -33,8 +33,6 @@ BG = "#F7F7F8"
 INK = "#1D1D1F"
 MUTED = "#8E8E93"
 GRID = "#D8D8DC"
-GOAL_LINE_COLOR = "#5C5C60"
-GOAL_HOURS = 4.0
 REST_MARKER_HEIGHT = 0.55
 
 USER_COLORS = (
@@ -114,7 +112,7 @@ def _apply_day_axis_labels(ax, all_days: list[dt.date]) -> None:
     day_numbers = [day.day for day in all_days]
     ax.set_xticks(day_numbers)
     ax.set_xticklabels([])
-    ax.tick_params(axis="x", pad=2, length=3, width=0.8, color=GRID)
+    ax.tick_params(axis="x", pad=2, length=3, width=0.8, color=INK)
 
     for day in all_days:
         color = WEEKEND_LABEL_COLOR if day.weekday() >= 5 else MUTED
@@ -143,16 +141,13 @@ def _apply_day_axis_labels(ax, all_days: list[dt.date]) -> None:
 
 
 def _style_calm_axes(ax) -> None:
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_visible(True)
-    ax.spines["bottom"].set_visible(True)
-    ax.spines["left"].set_color(GRID)
-    ax.spines["bottom"].set_color(GRID)
-    ax.spines["left"].set_linewidth(1.0)
-    ax.spines["bottom"].set_linewidth(1.0)
-    ax.tick_params(axis="y", colors=MUTED, labelsize=9, length=3, width=0.8, color=GRID)
-    ax.tick_params(axis="x", colors=MUTED, length=3, width=0.8, color=GRID)
+    # Полная рамка вокруг области графика (как классический boxed plot)
+    for spine in ("top", "right", "left", "bottom"):
+        ax.spines[spine].set_visible(True)
+        ax.spines[spine].set_color(INK)
+        ax.spines[spine].set_linewidth(1.0)
+    ax.tick_params(axis="y", colors=MUTED, labelsize=9, length=3, width=0.8, color=INK)
+    ax.tick_params(axis="x", colors=MUTED, length=3, width=0.8, color=INK)
     _apply_y_grid(ax)
 
 
@@ -273,13 +268,6 @@ def _render_single_chart(
     ax.set_xlim(0.2, last_day + 0.8)
     ax.set_ylim(0, _y_axis_top(max_value))
     _style_calm_axes(ax)
-    ax.axhline(
-        GOAL_HOURS,
-        color=GOAL_LINE_COLOR,
-        linewidth=1.2,
-        solid_capstyle="round",
-        zorder=2,
-    )
 
     for day_num, entry, color in zip(day_numbers, day_entries, colors):
         if entry.is_rest:
@@ -362,13 +350,6 @@ def _render_team_chart(
     ax.set_xlim(0.2, last_day + 0.8)
     ax.set_ylim(0, _y_axis_top(max_value))
     _style_calm_axes(ax)
-    ax.axhline(
-        GOAL_HOURS,
-        color=GOAL_LINE_COLOR,
-        linewidth=1.3,
-        solid_capstyle="round",
-        zorder=2,
-    )
 
     for day_num, day in zip(day_numbers, all_days):
         marked: list[tuple[int, DayEntry]] = []
