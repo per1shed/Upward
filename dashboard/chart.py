@@ -26,7 +26,6 @@ class ChartRenderer:
         t = self.theme
         ax.set_facecolor(t.card_bg)
         last = metrics.last_day
-        n_users = max(len(metrics.users), 1)
         y_top = self.y_top(metrics)
 
         # Weekend bands
@@ -42,23 +41,33 @@ class ChartRenderer:
                 )
 
         group_w = t.group_width
-        bar_w = group_w / n_users
-        labels: list[tuple[float, float, str, str]] = []
+        labels: list[tuple[float, float, str, str, bool]] = []
 
         for day in range(1, last + 1):
             di = day - 1
-            for ui, user in enumerate(metrics.users):
-                x = day - group_w / 2 + bar_w * (ui + 0.5)
+            # Only people who marked this day share the day slot
+            marked = []
+            for user in metrics.users:
                 hours = user.daily_hours[di]
                 is_rest = user.daily_rest[di]
                 is_br = user.daily_breakthrough[di]
+                if is_rest or is_br or hours > 0:
+                    marked.append((user, hours, is_rest, is_br))
+
+            if not marked:
+                continue
+
+            bar_w = group_w / len(marked)
+            for slot, (user, hours, is_rest, is_br) in enumerate(marked):
+                x = day - group_w / 2 + bar_w * (slot + 0.5)
+                draw_w = bar_w * 0.82
 
                 if is_rest:
                     height = max(0.45, y_top * 0.08)
                     ax.bar(
                         x,
                         height,
-                        width=bar_w * 0.78,
+                        width=draw_w,
                         facecolor="none",
                         edgecolor=user.color,
                         linewidth=t.rest_linewidth,
@@ -66,31 +75,16 @@ class ChartRenderer:
                     )
                     continue
 
-                if hours <= 0 and not is_br:
-                    continue
-
                 height = hours if hours > 0 else max(0.35, y_top * 0.06)
                 ax.bar(
                     x,
                     height,
-                    width=bar_w * 0.78,
+                    width=draw_w,
                     color=user.color,
                     edgecolor="none",
                     zorder=3,
                     alpha=0.95,
                 )
-                if is_br:
-                    ax.text(
-                        x,
-                        height + y_top * 0.015,
-                        "★",
-                        ha="center",
-                        va="bottom",
-                        fontsize=8,
-                        color=user.color,
-                        fontweight="bold",
-                        zorder=5,
-                    )
                 if hours > 0:
                     labels.append(
                         (
@@ -98,8 +92,12 @@ class ChartRenderer:
                             height,
                             format_duration_clock(hours),
                             user.color,
+                            is_br,
                         )
                     )
+                elif is_br:
+                    # Breakthrough without hours — star alone above the bar
+                    labels.append((x, height, "", user.color, True))
 
         self._place_labels(ax, labels, y_top)
 
@@ -147,36 +145,55 @@ class ChartRenderer:
     def _place_labels(
         self,
         ax,
-        labels: list[tuple[float, float, str, str]],
+        labels: list[tuple[float, float, str, str, bool]],
         y_top: float,
     ) -> None:
-        """Avoid overlaps: nudge labels up when neighbors are close."""
+        """Place H:MM above bars; ★ sits above the time, never on top of it."""
         t = self.theme
         if not labels:
             return
-        # Sort by x then height
         items = sorted(labels, key=lambda r: (r[0], -r[1]))
-        placed: list[tuple[float, float]] = []  # (x, y_text)
+        placed: list[tuple[float, float]] = []
         min_dx = 0.32
-        min_dy = y_top * 0.045
+        min_dy = y_top * 0.05
+        time_gap = y_top * 0.02
+        star_gap = y_top * 0.048
 
-        for x, height, text, color in items:
-            y = height + y_top * 0.018
-            # Star may sit near breakthrough labels — small extra pad if crowded
+        for x, height, text, color, is_br in items:
+            y = height + time_gap
             for px, py in placed:
                 if abs(px - x) < min_dx and abs(py - y) < min_dy:
                     y = max(y, py + min_dy)
-            y = min(y, y_top * 0.97)
-            ax.text(
-                x,
-                y,
-                text,
-                ha="center",
-                va="bottom",
-                fontsize=t.bar_label_size,
-                color=color,
-                fontweight="medium",
-                zorder=6,
-                clip_on=False,
-            )
-            placed.append((x, y))
+            y = min(y, y_top * 0.92)
+
+            if text:
+                ax.text(
+                    x,
+                    y,
+                    text,
+                    ha="center",
+                    va="bottom",
+                    fontsize=t.bar_label_size,
+                    color=color,
+                    fontweight="medium",
+                    zorder=6,
+                    clip_on=False,
+                )
+                placed.append((x, y))
+
+            if is_br:
+                star_y = (y + star_gap) if text else (height + time_gap)
+                star_y = min(star_y, y_top * 0.98)
+                ax.text(
+                    x,
+                    star_y,
+                    "★",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    color=color,
+                    fontweight="bold",
+                    zorder=7,
+                    clip_on=False,
+                )
+                placed.append((x, star_y))
