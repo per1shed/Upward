@@ -628,17 +628,10 @@ async def _load_users_month_data(
 
 
 async def build_team_progress_chart(year: int, month: int) -> tuple[bytes, str]:
-    users_data = await _load_users_month_data(year, month)
-    if not users_data:
-        raise RuntimeError("Нет зарегистрированных участников")
+    """Командная статистика — Apple-dashboard (см. dashboard/)."""
+    from dashboard import build_team_dashboard
 
-    users_series = [(name, entries) for _, name, entries in users_data]
-    title = f"Общий прогресс — {MONTH_NAMES[month]} {year}"
-    png = await asyncio.to_thread(
-        _render_team_chart, users_series, title, year, month
-    )
-    caption = f"📊 <b>Общий график</b> · {MONTH_NAMES[month]} {year}"
-    return png, caption
+    return await build_team_dashboard(year, month)
 
 
 async def build_progress_chart(
