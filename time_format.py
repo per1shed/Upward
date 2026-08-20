@@ -3,24 +3,42 @@ from __future__ import annotations
 import datetime as dt
 import re
 
+from ui_branding import (
+    CUSTOM_EMOJI_BREAKTHROUGH,
+    CUSTOM_EMOJI_LOG,
+    CUSTOM_EMOJI_REST,
+    PLACEHOLDER_BREAKTHROUGH,
+    PLACEHOLDER_LOG,
+    PLACEHOLDER_REST,
+    tg_emoji,
+)
+
 TIME_PATTERN = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 MAX_MINUTES_PER_DAY = 24 * 60
 
-TIME_INPUT_HINT = "Формат: <b>ЧЧ:ММ</b>\nПример: <code>7:30</code>"
+TIME_PROMPT_HEADER = (
+    f"{tg_emoji(CUSTOM_EMOJI_LOG, PLACEHOLDER_LOG)}Введите время:\n"
+    "Пример: <code>7:30</code>"
+)
+
+TIME_INPUT_HINT = "Пример: <code>7:30</code>"
 
 REST_INPUT_HINT = (
-    "😴 Или отправьте <b>отдых</b> — день будет отмечен как день отдыха."
+    f"{tg_emoji(CUSTOM_EMOJI_REST, PLACEHOLDER_REST)} "
+    "Или отправьте <b>отдых</b>"
 )
 
 MAX_BREAKTHROUGH_NOTE_LEN = 300
 
 BREAKTHROUGH_INPUT_HINT = (
-    "⭐ Или отправьте <b>прорыв</b> — день будет отмечен как день прорыва."
+    f"{tg_emoji(CUSTOM_EMOJI_BREAKTHROUGH, PLACEHOLDER_BREAKTHROUGH)} "
+    "Или отправьте <b>прорыв</b>"
 )
 
 BREAKTHROUGH_NOTE_PROMPT = (
-    "⭐ <b>Опишите свой прорыв</b> одним сообщением.\n"
+    f"{tg_emoji(CUSTOM_EMOJI_BREAKTHROUGH, PLACEHOLDER_BREAKTHROUGH)} "
+    "<b>Опишите свой прорыв</b> одним сообщением.\n"
     "Этот текст появится в списке прорывов.\n\n"
     f"До {MAX_BREAKTHROUGH_NOTE_LEN} символов."
 )

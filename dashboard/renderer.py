@@ -31,31 +31,25 @@ class DashboardRenderer:
         fig = plt.figure(figsize=(fig_w, fig_h), dpi=t.dpi, facecolor=t.bg)
         plt.rcParams["font.family"] = t.font_family
 
-        if t.stacked_mid and t.leader_own_row:
-            n_rows = 6
-            height_ratios = [0.75, 0.95, 2.9, 1.35, 1.6, 0.85]
-        elif t.stacked_mid:
-            n_rows = 5
-            height_ratios = [
-                t.height_ratios[0],
-                t.height_ratios[1],
-                t.height_ratios[2] * 0.75,
-                t.height_ratios[2] * 0.4,
-                t.height_ratios[3],
-            ]
-        elif t.leader_own_row:
-            n_rows = 5
-            height_ratios = [
-                t.height_ratios[0],
-                t.height_ratios[1],
-                t.height_ratios[2],
-                t.height_ratios[3] * 0.85,
-                t.height_ratios[3] * 0.4,
-            ]
+        show_header = t.show_header
+        show_kpi = t.show_kpi_row
+        height_ratios: list[float] = []
+        if show_header:
+            height_ratios.append(0.75)
+        if show_kpi:
+            height_ratios.append(0.95)
+        if t.stacked_mid:
+            height_ratios.extend([3.2, 1.35])
         else:
-            n_rows = 4
-            height_ratios = list(t.height_ratios)
+            height_ratios.append(t.height_ratios[0])
+        height_ratios.append(t.height_ratios[1])
+        if t.leader_own_row:
+            height_ratios.append(t.height_ratios[2])
+        else:
+            # leader sits in the users row — keep users ratio only
+            pass
 
+        n_rows = len(height_ratios)
         gs = GridSpec(
             n_rows,
             1,
@@ -69,10 +63,12 @@ class DashboardRenderer:
         )
 
         row = 0
-        self._draw_header(fig, gs[row].subgridspec(1, 1)[0, 0], metrics)
-        row += 1
-        self._draw_kpi_row(fig, gs[row].subgridspec(1, 5, wspace=0.025), metrics)
-        row += 1
+        if show_header:
+            self._draw_header(fig, gs[row].subgridspec(1, 1)[0, 0], metrics)
+            row += 1
+        if show_kpi:
+            self._draw_kpi_row(fig, gs[row].subgridspec(1, 3, wspace=0.025), metrics)
+            row += 1
 
         if t.stacked_mid:
             self._draw_main_chart_card(fig, gs[row].subgridspec(1, 1)[0, 0], metrics)
@@ -262,22 +258,13 @@ class DashboardRenderer:
     def _draw_kpi_row(self, fig, gs_row, metrics: TeamMonthMetrics) -> None:
         t = self.theme
         calc = MetricsCalculator
+        # Максимум за день = сумма часов всех, кто отметился в лучший день
         items = [
             ("Всего часов", calc.fmt(metrics.team_total), ""),
-            (
-                "Лучший день",
-                metrics.format_best_day(),
-                calc.fmt(metrics.best_day_hours) if metrics.best_day_hours else "",
-            ),
             ("Максимум за день", calc.fmt(metrics.daily_max), ""),
             ("Среднее в день", calc.fmt(metrics.avg_day_hours), ""),
-            (
-                "Активных дней",
-                f"{metrics.active_days_team} / {metrics.last_day}",
-                "",
-            ),
         ]
-        icons = ("◷", "↗", "★", "▮", "▦")
+        icons = ("◷", "★", "▮")
         for i, ((label, value, sub), icon) in enumerate(zip(items, icons)):
             ax = fig.add_subplot(gs_row[0, i])
             self._card(ax)
@@ -565,10 +552,9 @@ class DashboardRenderer:
         stats = [
             ("среднее", MetricsCalculator.fmt(user.avg_active_hours)),
             ("макс.", MetricsCalculator.fmt(user.max_day_hours)),
-            ("активных", f"{user.active_days} / {last_day}"),
         ]
         for i, (lab, val) in enumerate(stats):
-            x = 0.08 + i * 0.31
+            x = 0.08 + i * 0.46
             ax.text(
                 x,
                 0.22,

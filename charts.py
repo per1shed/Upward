@@ -24,6 +24,13 @@ from database import (
 )
 from keyboards import MONTH_NAMES
 from time_format import format_duration, format_duration_clock
+from ui_branding import (
+    CUSTOM_EMOJI_BREAKTHROUGH,
+    PLACEHOLDER_BREAKTHROUGH,
+    PLACEHOLDER_LOG,
+    BTN_LOG_TEXT,
+    tg_emoji,
+)
 
 if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile
@@ -574,7 +581,7 @@ def _render_year_breakthrough_calendar(
     subtitle = (
         f"Всего прорывных дней: {total_days}"
         if total_days
-        else "Отметьте прорыв через «✅отметить» — слово «прорыв»"
+        else f"Отметьте прорыв через «{PLACEHOLDER_LOG}{BTN_LOG_TEXT}» — слово «прорыв»"
     )
     fig.text(0.5, 0.045, subtitle, ha="center", fontsize=12, color=MUTED)
 
@@ -611,7 +618,10 @@ async def build_breakthrough_year_calendar(year: int) -> tuple[bytes, str]:
         _render_year_breakthrough_calendar, year, users_series
     )
     total = sum(len(dates) for _n, _c, dates in users_series)
-    caption = f"⭐ <b>Календарь прорывов</b> · {year} · дней: <b>{total}</b>"
+    caption = (
+        f"{tg_emoji(CUSTOM_EMOJI_BREAKTHROUGH, PLACEHOLDER_BREAKTHROUGH)} "
+        f"<b>Календарь прорывов</b> · {year} · дней: <b>{total}</b>"
+    )
     return png, caption
 
 

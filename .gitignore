@@ -50,6 +50,9 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# Локальные материалы для пиара бота (Reels, превью и т.п.)
+marketing/
+
 # Прочее
 *.bak
 *.tmp

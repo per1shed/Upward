@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
-from html import escape
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ChatAction
-from aiogram.types import CallbackQuery, Message, User
+from aiogram.types import CallbackQuery, FSInputFile, Message, User
 
 from charts import build_team_progress_chart, chart_photo
 from context import get_screen, set_screen
@@ -36,7 +35,7 @@ from time_format import (
     MAX_BREAKTHROUGH_NOTE_LEN,
     MAX_MINUTES_PER_DAY,
     REST_INPUT_HINT,
-    TIME_INPUT_HINT,
+    TIME_PROMPT_HEADER,
     duration_to_hours,
     format_duration,
     format_duration_clock,
@@ -45,14 +44,26 @@ from time_format import (
     parse_time_input,
 )
 from timezone_utils import today_local
+from ui_branding import (
+    CUSTOM_EMOJI_BREAKTHROUGH,
+    CUSTOM_EMOJI_PROGRESS,
+    PLACEHOLDER_BREAKTHROUGH,
+    PLACEHOLDER_PROGRESS,
+    WELCOME_PHOTO_PATH,
+    format_breakthrough_done_message,
+    format_rest_done_message,
+    format_time_done_message,
+    mention_log_button,
+    tg_emoji,
+)
+from ui_keyboard import (
+    answer_done,
+    answer_photo_tracked,
+    answer_tracked,
+    edit_text_tracked,
+)
 
 router = Router()
-
-WELCOME_TEXT = (
-    "Привет! Это бот для отслеживания продуктивности за день.\n\n"
-    "<b>✅отметить</b> — записать время за сегодня (ЧЧ:ММ)\n"
-    "<b>📊 Статистика</b> — ваши показатели, общий прогресс и график"
-)
 
 UNEXPECTED_TEXT_MSG = (
     "Сейчас бот не ждёт текстового сообщения.\n"
@@ -70,8 +81,6 @@ _EXPIRED_CALLBACK_MARKERS = (
     "query id is invalid",
     "response timeout expired",
 )
-
-_MESSAGE_NOT_MODIFIED = "message is not modified"
 
 CHART_LOADING_TEXT = "📊 <b>График строится…</b> ⏳"
 
@@ -96,15 +105,19 @@ async def safe_edit_text(
     text: str,
     *,
     reply_markup=None,
-) -> None:
-    """Редактирует сообщение; повтор с тем же текстом не вызывает ошибку."""
-    try:
-        await message.edit_text(text, reply_markup=reply_markup)
-    except TelegramBadRequest as exc:
-        msg = (exc.message or "").lower()
-        if _MESSAGE_NOT_MODIFIED not in msg:
-            raise
+) -> bool:
+    """Редактирует текст. False, если сообщение нельзя править как текст."""
+    return await edit_text_tracked(message, text, reply_markup=reply_markup)
 
+def _message_is_plain_text(message: Message) -> bool:
+    """True только для обычных текстовых сообщений (не фото/медиа)."""
+    return bool(message.text) and not (
+        message.photo
+        or message.video
+        or message.document
+        or message.animation
+        or message.sticker
+    )
 
 async def delete_message_safe(message: Message | None) -> None:
     if message is None:
@@ -141,11 +154,12 @@ async def ensure_user_callback(callback: CallbackQuery) -> int | None:
 
 
 async def send_team_chart(message: Message, year: int, month: int) -> None:
-    loading = await message.answer(CHART_LOADING_TEXT)
+    loading = await answer_tracked(message, CHART_LOADING_TEXT)
     try:
         await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
         png, caption = await build_team_progress_chart(year, month)
-        await message.answer_photo(
+        await answer_photo_tracked(
+            message,
             chart_photo(png),
             caption=caption,
             reply_markup=chart_nav_keyboard(year, month),
@@ -158,7 +172,8 @@ async def send_breakthrough_list(
     message: Message, year: int, month: int
 ) -> None:
     text = await format_breakthroughs_list(year)
-    await message.answer(
+    await answer_tracked(
+        message,
         text,
         reply_markup=breakthrough_calendar_keyboard(year, month),
     )
@@ -168,22 +183,19 @@ async def send_full_statistics(message: Message, user_id: int) -> None:
     today = today_local()
     set_screen(user_id, "stats", chart_year=today.year, chart_month=today.month)
 
-    await message.answer(await build_team_summary())
+    await answer_tracked(message, await build_team_summary())
     await send_team_chart(message, today.year, today.month)
 
 
 def _log_input_hints() -> str:
-    return f"{TIME_INPUT_HINT}\n\n{REST_INPUT_HINT}\n{BREAKTHROUGH_INPUT_HINT}"
+    return f"{TIME_PROMPT_HEADER}\n\n{REST_INPUT_HINT}\n{BREAKTHROUGH_INPUT_HINT}"
 
 
 def time_prompt_text(today: dt.date, existing: DayEntry | None = None) -> str:
-    date_label = today.strftime("%d.%m.%Y")
     text = (
-        f"📅 Сегодня: <b>{date_label}</b>\n\n"
-        f"Введите время продуктивной работы за день:\n{TIME_INPUT_HINT}\n\n"
+        f"{TIME_PROMPT_HEADER}\n\n"
         f"{REST_INPUT_HINT}\n"
-        f"{BREAKTHROUGH_INPUT_HINT}\n\n"
-        "Повторный ввод за тот же день <b>суммируется</b> с уже записанным временем."
+        f"{BREAKTHROUGH_INPUT_HINT}"
     )
     if existing is not None:
         if existing.is_rest:
@@ -214,7 +226,11 @@ def time_prompt_text(today: dt.date, existing: DayEntry | None = None) -> str:
 
 
 async def show_main_menu(message: Message) -> None:
-    await message.answer(WELCOME_TEXT, reply_markup=main_menu_keyboard())
+    await answer_photo_tracked(
+        message,
+        FSInputFile(WELCOME_PHOTO_PATH),
+        reply_markup=main_menu_keyboard(),
+    )
 
 
 async def restore_screen(message: Message, state: FSMContext, user_id: int) -> None:
@@ -231,6 +247,19 @@ async def restore_screen(message: Message, state: FSMContext, user_id: int) -> N
 
     if screen == "log":
         await ask_time_for_today(message, state, user_id)
+        return
+
+    if screen == "log_breakthrough":
+        await state.set_state(LogTime.waiting_breakthrough_note)
+        today = today_local()
+        data = await state.get_data()
+        if not data.get("entry_date"):
+            await state.update_data(entry_date=today.isoformat())
+        await answer_tracked(
+            message,
+            BREAKTHROUGH_NOTE_PROMPT,
+            reply_markup=cancel_keyboard(),
+        )
         return
 
     await show_main_menu(message)
@@ -250,20 +279,29 @@ async def ask_time_for_today(
     markup = time_prompt_keyboard()
 
     if isinstance(target, Message):
-        await target.answer(text, reply_markup=markup)
+        await answer_tracked(target, text, reply_markup=markup)
     elif target.message:
-        await safe_edit_text(target.message, text, reply_markup=markup)
+        msg = target.message
+        if _message_is_plain_text(msg):
+            edited = await safe_edit_text(msg, text, reply_markup=markup)
+            if edited:
+                return
+        await answer_tracked(msg, text, reply_markup=markup)
 
 
 async def build_team_summary() -> str:
+    title = (
+        f"{tg_emoji(CUSTOM_EMOJI_PROGRESS, PLACEHOLDER_PROGRESS)} "
+        "<b>Общий прогресс</b>"
+    )
     users = await get_registered_users()
     if not users:
         return (
-            "<b>Общий прогресс</b>\n\n"
+            f"{title}\n\n"
             "Пока никто не нажимал /start. Отправьте /start, чтобы появиться в списке."
         )
 
-    blocks: list[str] = ["<b>Общий прогресс</b>\n"]
+    blocks: list[str] = [f"{title}\n"]
     for uid, name in users:
         blocks.append(await format_user_stats(uid))
         blocks.append("")
@@ -285,7 +323,6 @@ async def cmd_log(message: Message, state: FSMContext) -> None:
     user_id = await ensure_user(message)
     if user_id is None:
         return
-    await state.clear()
     await ask_time_for_today(message, state, user_id)
 
 
@@ -315,12 +352,11 @@ async def menu_log(callback: CallbackQuery, state: FSMContext) -> None:
     user_id = await ensure_user_callback(callback)
     if user_id is None:
         return
-    await state.clear()
     if callback.message:
         await ask_time_for_today(callback, state, user_id)
 
 
-@router.message(LogTime.waiting_time)
+@router.message(LogTime.waiting_time, F.text)
 async def log_time_input(message: Message, state: FSMContext) -> None:
     user_id = await ensure_user(message)
     if user_id is None:
@@ -331,8 +367,9 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
     entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
     if entry_date != today:
         await state.clear()
-        await message.answer(
-            "Отметить можно только сегодня. Нажмите «✅отметить» снова.",
+        await answer_tracked(
+            message,
+            "Отметить можно только сегодня. Нажмите " + mention_log_button() + " снова.",
             reply_markup=main_menu_keyboard(),
         )
         return
@@ -350,7 +387,8 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
 
     parsed = parse_time_input(text)
     if parsed is None:
-        await message.answer(
+        await answer_tracked(
+            message,
             f"Не удалось разобрать время.\n\n{_log_input_hints()}",
             reply_markup=time_prompt_keyboard(),
         )
@@ -366,7 +404,8 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         total_hours = added_hours
 
     if round(total_hours * 60) > MAX_MINUTES_PER_DAY:
-        await message.answer(
+        await answer_tracked(
+            message,
             f"Сумма за день не может превышать 24 часа.\n\n{_log_input_hints()}",
             reply_markup=time_prompt_keyboard(),
         )
@@ -385,23 +424,13 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
     await state.clear()
     set_screen(user_id, "menu")
 
-    if existing is not None and not existing.is_rest and existing.hours > 0:
-        result_text = (
-            f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
-            f"добавлено <b>{format_duration(added_hours)}</b>, "
-            f"всего <b>{format_duration(total_hours)}</b> продуктивного времени."
+    result_text = format_time_done_message(added_hours, total_hours)
+    if keep_breakthrough:
+        result_text += " " + tg_emoji(
+            CUSTOM_EMOJI_BREAKTHROUGH, PLACEHOLDER_BREAKTHROUGH
         )
-        if keep_breakthrough:
-            result_text += " ⭐"
-    else:
-        result_text = (
-            f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
-            f"<b>{format_duration(total_hours)}</b> продуктивного времени."
-        )
-        if keep_breakthrough:
-            result_text += " ⭐"
 
-    await message.answer(result_text)
+    await answer_done(message, result_text)
     await send_team_chart(message, today.year, today.month)
 
 
@@ -417,9 +446,7 @@ async def _mark_rest_day(
     )
     await state.clear()
     set_screen(user_id, "menu")
-    await message.answer(
-        f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день отдыха</b>."
-    )
+    await answer_done(message, format_rest_done_message())
     await send_team_chart(message, today.year, today.month)
 
 
@@ -443,8 +470,9 @@ async def _start_breakthrough(
     )
     await state.update_data(entry_date=today.isoformat())
     await state.set_state(LogTime.waiting_breakthrough_note)
-    set_screen(user_id, "log")
-    await message.answer(
+    set_screen(user_id, "log_breakthrough")
+    await answer_tracked(
+        message,
         BREAKTHROUGH_NOTE_PROMPT,
         reply_markup=cancel_keyboard(),
     )
@@ -462,8 +490,9 @@ async def log_rest_button(callback: CallbackQuery, state: FSMContext) -> None:
     entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
     if entry_date != today:
         await state.clear()
-        await callback.message.answer(
-            "Отметить можно только сегодня. Нажмите «✅отметить» снова.",
+        await answer_tracked(
+            callback.message,
+            "Отметить можно только сегодня. Нажмите " + mention_log_button() + " снова.",
             reply_markup=main_menu_keyboard(),
         )
         return
@@ -484,8 +513,9 @@ async def log_breakthrough_button(callback: CallbackQuery, state: FSMContext) ->
     entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
     if entry_date != today:
         await state.clear()
-        await callback.message.answer(
-            "Отметить можно только сегодня. Нажмите «✅отметить» снова.",
+        await answer_tracked(
+            callback.message,
+            "Отметить можно только сегодня. Нажмите " + mention_log_button() + " снова.",
             reply_markup=main_menu_keyboard(),
         )
         return
@@ -494,7 +524,7 @@ async def log_breakthrough_button(callback: CallbackQuery, state: FSMContext) ->
     await _start_breakthrough(callback.message, state, user_id, today, name)
 
 
-@router.message(LogTime.waiting_breakthrough_note)
+@router.message(LogTime.waiting_breakthrough_note, F.text)
 async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
     user_id = await ensure_user(message)
     if user_id is None:
@@ -505,21 +535,24 @@ async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
     entry_date = dt.date.fromisoformat(data.get("entry_date", today.isoformat()))
     if entry_date != today:
         await state.clear()
-        await message.answer(
-            "Описать прорыв можно только за сегодня. Нажмите «✅отметить» снова.",
+        await answer_tracked(
+            message,
+            "Описать прорыв можно только за сегодня. Нажмите " + mention_log_button() + " снова.",
             reply_markup=main_menu_keyboard(),
         )
         return
 
     note = (message.text or "").strip()
     if not note:
-        await message.answer(
+        await answer_tracked(
+            message,
             "Описание не должно быть пустым.\n\n" + BREAKTHROUGH_NOTE_PROMPT,
             reply_markup=cancel_keyboard(),
         )
         return
     if len(note) > MAX_BREAKTHROUGH_NOTE_LEN:
-        await message.answer(
+        await answer_tracked(
+            message,
             f"Слишком длинно: максимум {MAX_BREAKTHROUGH_NOTE_LEN} символов.\n\n"
             + BREAKTHROUGH_NOTE_PROMPT,
             reply_markup=cancel_keyboard(),
@@ -531,28 +564,17 @@ async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
     set_screen(user_id, "menu")
 
     if not saved:
-        await message.answer(
+        await answer_tracked(
+            message,
             "Не удалось сохранить описание: день прорыва не найден.\n"
-            "Отметьте прорыв снова через «✅отметить».",
+            "Отметьте прорыв снова через " + mention_log_button() + ".",
             reply_markup=main_menu_keyboard(),
         )
         return
 
-    note_safe = escape(note)
     entry = await get_entry(user_id, today)
     hours = entry.hours if entry else 0.0
-    if hours > 0:
-        result = (
-            f"✅ Готово! {today.strftime('%d.%m.%Y')}: "
-            f"<b>день прорыва</b> ⭐ · <b>{format_duration(hours)}</b>\n"
-            f"Описание: <i>{note_safe}</i>"
-        )
-    else:
-        result = (
-            f"✅ Готово! {today.strftime('%d.%m.%Y')}: <b>день прорыва</b> ⭐\n"
-            f"Описание: <i>{note_safe}</i>"
-        )
-    await message.answer(result)
+    await answer_done(message, format_breakthrough_done_message(hours, note))
     await send_team_chart(message, today.year, today.month)
 
 
@@ -599,23 +621,35 @@ async def chart_nav(callback: CallbackQuery) -> None:
         await send_team_chart(callback.message, year, month)
 
 
-@router.message(F.text)
+@router.message(F.text, StateFilter(None))
 async def unexpected_text(message: Message, state: FSMContext) -> None:
     if not message.from_user or not message.text:
         return
     if message.text.startswith("/"):
         return
 
-    current_state = await state.get_state()
-    if current_state in {
-        LogTime.waiting_time.state,
-        LogTime.waiting_breakthrough_note.state,
-    }:
-        return
-
     user_id = await ensure_user(message)
     if user_id is None:
         return
 
-    await message.answer(UNEXPECTED_TEXT_MSG)
+    # FSM мог сброситься, но экран всё ещё «ввод времени» (Отметить / Отметить снова)
+    if get_screen(user_id).get("screen") == "log":
+        today = today_local()
+        await state.set_state(LogTime.waiting_time)
+        data = await state.get_data()
+        if not data.get("entry_date"):
+            await state.update_data(entry_date=today.isoformat())
+        await log_time_input(message, state)
+        return
+
+    if get_screen(user_id).get("screen") == "log_breakthrough":
+        today = today_local()
+        await state.set_state(LogTime.waiting_breakthrough_note)
+        data = await state.get_data()
+        if not data.get("entry_date"):
+            await state.update_data(entry_date=today.isoformat())
+        await breakthrough_note_input(message, state)
+        return
+
+    await answer_tracked(message, UNEXPECTED_TEXT_MSG)
     await restore_screen(message, state, user_id)

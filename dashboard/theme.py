@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 class Theme:
     # Canvas — вариант E: широкий график + лидер отдельной строкой
     width_px: int = 1800
-    height_px: int = 1500
+    height_px: int = 1280
     dpi: int = 140
     bg: str = "#F8F8FA"
     card_bg: str = "#FFFFFF"
@@ -50,13 +50,16 @@ class Theme:
 
     # Layout (вариант E)
     margin_x: float = 0.025
-    margin_y: float = 0.028
+    margin_y: float = 0.018
     gap: float = 0.012
-    height_ratios: tuple[float, float, float, float] = (0.75, 0.95, 3.2, 2.0)
+    # chart+donut | user cards | leader  (KPI added separately when enabled)
+    height_ratios: tuple[float, float, float] = (3.4, 1.7, 0.85)
+    show_header: bool = False
+    show_kpi_row: bool = True
     mid_width_ratios: tuple[float, float] = (2.8, 1.0)
     stacked_mid: bool = False
     leader_own_row: bool = True
-    hspace: float = 0.12
+    hspace: float = 0.10
     layout_label: str = ""
 
     # Chart
@@ -67,10 +70,8 @@ class Theme:
     kpi_icon_colors: tuple[str, ...] = field(
         default_factory=lambda: (
             "#0A84FF",
-            "#30D158",
             "#FFD60A",
             "#BF5AF2",
-            "#64D2FF",
         )
     )
 

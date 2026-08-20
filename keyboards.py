@@ -4,6 +4,17 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from timezone_utils import today_local
+from ui_branding import (
+    BTN_BREAKTHROUGH_TEXT,
+    BTN_BREAKTHROUGHS_TEXT,
+    BTN_LOG_TEXT,
+    BTN_REST_TEXT,
+    BTN_STATS_TEXT,
+    CUSTOM_EMOJI_BREAKTHROUGH,
+    CUSTOM_EMOJI_LOG,
+    CUSTOM_EMOJI_REST,
+    CUSTOM_EMOJI_STATS,
+)
 
 MONTH_NAMES = (
     "",
@@ -25,8 +36,16 @@ MONTH_NAMES = (
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="✅отметить", callback_data="menu:log"),
-        InlineKeyboardButton(text="📊 Статистика", callback_data="menu:stats"),
+        InlineKeyboardButton(
+            text=BTN_LOG_TEXT,
+            callback_data="menu:log",
+            icon_custom_emoji_id=CUSTOM_EMOJI_LOG,
+        ),
+        InlineKeyboardButton(
+            text=BTN_STATS_TEXT,
+            callback_data="menu:stats",
+            icon_custom_emoji_id=CUSTOM_EMOJI_STATS,
+        ),
     )
     return builder.as_markup()
 
@@ -55,12 +74,20 @@ def chart_nav_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
             callback_data=f"chart:nav:{next_year}-{next_month:02d}",
         ),
     )
-    builder.row(InlineKeyboardButton(text="« Меню", callback_data="menu:home"))
     builder.row(
         InlineKeyboardButton(
-            text="⭐ Прорывы",
-            callback_data=f"chart:breakthroughs:{year}",
+            text=f"{BTN_LOG_TEXT} снова",
+            callback_data="menu:log",
+            icon_custom_emoji_id=CUSTOM_EMOJI_LOG,
         )
+    )
+    builder.row(
+        InlineKeyboardButton(text="« Меню", callback_data="menu:home"),
+        InlineKeyboardButton(
+            text=BTN_BREAKTHROUGHS_TEXT,
+            callback_data=f"chart:breakthroughs:{year}",
+            icon_custom_emoji_id=CUSTOM_EMOJI_BREAKTHROUGH,
+        ),
     )
     return builder.as_markup()
 
@@ -95,8 +122,16 @@ def time_prompt_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="😴 Отдых", callback_data="log:rest"),
-                InlineKeyboardButton(text="⭐ Прорыв", callback_data="log:breakthrough"),
+                InlineKeyboardButton(
+                    text=BTN_REST_TEXT,
+                    callback_data="log:rest",
+                    icon_custom_emoji_id=CUSTOM_EMOJI_REST,
+                ),
+                InlineKeyboardButton(
+                    text=BTN_BREAKTHROUGH_TEXT,
+                    callback_data="log:breakthrough",
+                    icon_custom_emoji_id=CUSTOM_EMOJI_BREAKTHROUGH,
+                ),
             ],
             [InlineKeyboardButton(text="« Отмена", callback_data="menu:home")],
         ]

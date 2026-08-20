@@ -102,7 +102,9 @@ class ChartRenderer:
         self._place_labels(ax, labels, y_top)
 
         ax.set_xlim(0.4, last + 0.6)
-        ax.set_ylim(0, y_top)
+        # ylim may be expanded inside _place_labels to fit raised captions
+        if ax.get_ylim()[1] <= y_top:
+            ax.set_ylim(0, y_top)
         ax.set_ylabel("Часы", fontsize=t.axis_size, color=t.muted, labelpad=6)
         ax.tick_params(axis="y", labelsize=t.axis_size, colors=t.muted, length=0)
         ax.tick_params(axis="x", length=0)
@@ -148,25 +150,51 @@ class ChartRenderer:
         labels: list[tuple[float, float, str, str, bool]],
         y_top: float,
     ) -> None:
-        """Place H:MM above bars; ★ sits above the time, never on top of it."""
+        """Place H:MM above bars; stack up if they collide with another time label.
+
+        Grid / scale lines may be overlapped — that is fine.
+        Overlap with another user's bar column is also allowed.
+        """
         t = self.theme
         if not labels:
+            ax.set_ylim(0, y_top)
             return
-        items = sorted(labels, key=lambda r: (r[0], -r[1]))
-        placed: list[tuple[float, float]] = []
-        min_dx = 0.32
-        min_dy = y_top * 0.05
-        time_gap = y_top * 0.02
-        star_gap = y_top * 0.048
+
+        ax.set_ylim(0, y_top)
+
+        # Tallest bars first so their labels keep the natural position
+        items = sorted(labels, key=lambda r: (-r[1], r[0]))
+        # (x, y_bottom, y_top_of_glyph) of already placed text
+        placed: list[tuple[float, float, float]] = []
+
+        # Generous box so H:MM glyphs don't visually overlap
+        label_h = max(y_top * 0.052, 0.42)
+        gap = max(y_top * 0.018, 0.12)
+        # Same-day grouped bars are ~0.25–0.4 apart — catch them all
+        min_dx = 0.58
+        time_gap = max(y_top * 0.016, 0.1)
+        star_h = label_h * 0.85
+        star_gap = label_h * 1.05
+        max_y_used = 0.0
+
+        def clear_of_other_labels(x: float, y: float, box_h: float) -> float:
+            for _ in range(24):
+                y_before = y
+                for px, py0, py1 in placed:
+                    if abs(px - x) >= min_dx:
+                        continue
+                    # Vertical ranges overlap (with padding)
+                    if y < py1 + gap and (y + box_h) > py0 - gap:
+                        y = py1 + gap
+                if abs(y - y_before) < 1e-9:
+                    break
+            return y
 
         for x, height, text, color, is_br in items:
             y = height + time_gap
-            for px, py in placed:
-                if abs(px - x) < min_dx and abs(py - y) < min_dy:
-                    y = max(y, py + min_dy)
-            y = min(y, y_top * 0.92)
 
             if text:
+                y = clear_of_other_labels(x, y, label_h)
                 ax.text(
                     x,
                     y,
@@ -179,11 +207,12 @@ class ChartRenderer:
                     zorder=6,
                     clip_on=False,
                 )
-                placed.append((x, y))
+                placed.append((x, y, y + label_h))
+                max_y_used = max(max_y_used, y + label_h)
 
             if is_br:
                 star_y = (y + star_gap) if text else (height + time_gap)
-                star_y = min(star_y, y_top * 0.98)
+                star_y = clear_of_other_labels(x, star_y, star_h)
                 ax.text(
                     x,
                     star_y,
@@ -196,4 +225,9 @@ class ChartRenderer:
                     zorder=7,
                     clip_on=False,
                 )
-                placed.append((x, star_y))
+                placed.append((x, star_y, star_y + star_h))
+                max_y_used = max(max_y_used, star_y + star_h)
+
+        need_top = max(y_top, max_y_used + y_top * 0.05)
+        if need_top > y_top:
+            ax.set_ylim(0, need_top)

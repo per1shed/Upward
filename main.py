@@ -9,6 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import load_settings
 from database import fill_all_missed_days, init_db
+from access import AccessMiddleware
 from handlers import router
 from timezone_utils import TZ
 
@@ -27,6 +28,8 @@ async def run_bot() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
+    dp.message.middleware(AccessMiddleware())
+    dp.callback_query.middleware(AccessMiddleware())
     dp.include_router(router)
 
     me = await bot.get_me()

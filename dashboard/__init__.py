@@ -12,6 +12,7 @@ from database import (
     get_registered_users,
 )
 from keyboards import MONTH_NAMES
+from ui_branding import CUSTOM_EMOJI_PROGRESS, PLACEHOLDER_PROGRESS, tg_emoji
 
 from dashboard.metrics import MetricsCalculator
 from dashboard.renderer import DashboardRenderer
@@ -50,5 +51,8 @@ async def build_team_dashboard(year: int, month: int) -> tuple[bytes, str]:
         raise RuntimeError("Нет зарегистрированных участников")
 
     png = await asyncio.to_thread(_render_dashboard_png, users_data, year, month)
-    caption = f"📊 <b>Общий прогресс</b> · {MONTH_NAMES[month]} {year}"
+    caption = (
+        f"{tg_emoji(CUSTOM_EMOJI_PROGRESS, PLACEHOLDER_PROGRESS)} "
+        f"<b>Общий прогресс</b> · {MONTH_NAMES[month]} {year}"
+    )
     return png, caption

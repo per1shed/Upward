@@ -73,6 +73,15 @@ async def init_db() -> None:
         await _ensure_is_rest_column(db)
         await _ensure_is_breakthrough_column(db)
         await _ensure_breakthrough_note_column(db)
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ui_keyboards (
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, message_id)
+            )
+            """
+        )
         await db.commit()
 
 
@@ -362,3 +371,68 @@ async def get_display_name(user_id: int) -> str | None:
         )
         row = await cursor.fetchone()
     return row[0] if row else None
+
+
+async def list_ui_keyboard_messages(chat_id: int) -> list[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT message_id FROM ui_keyboards WHERE chat_id = ?",
+            (chat_id,),
+        )
+        rows = await cursor.fetchall()
+    return [int(r[0]) for r in rows]
+
+
+async def add_ui_keyboard_message(chat_id: int, message_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO ui_keyboards (chat_id, message_id)
+            VALUES (?, ?)
+            """,
+            (chat_id, message_id),
+        )
+        # Keep only the newest few ids per chat
+        await db.execute(
+            """
+            DELETE FROM ui_keyboards
+            WHERE chat_id = ?
+              AND message_id NOT IN (
+                  SELECT message_id FROM ui_keyboards
+                  WHERE chat_id = ?
+                  ORDER BY message_id DESC
+                  LIMIT 8
+              )
+            """,
+            (chat_id, chat_id),
+        )
+        await db.commit()
+
+
+async def remove_ui_keyboard_message(chat_id: int, message_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM ui_keyboards WHERE chat_id = ? AND message_id = ?",
+            (chat_id, message_id),
+        )
+        await db.commit()
+
+
+async def clear_ui_keyboard_messages(
+    chat_id: int, *, keep_message_id: int | None = None
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        if keep_message_id is None:
+            await db.execute(
+                "DELETE FROM ui_keyboards WHERE chat_id = ?",
+                (chat_id,),
+            )
+        else:
+            await db.execute(
+                """
+                DELETE FROM ui_keyboards
+                WHERE chat_id = ? AND message_id != ?
+                """,
+                (chat_id, keep_message_id),
+            )
+        await db.commit()

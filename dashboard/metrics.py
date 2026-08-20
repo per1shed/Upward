@@ -123,18 +123,17 @@ class MetricsCalculator:
             sum(u.daily_hours[d] for u in metrics.users) for d in range(last_day)
         ]
 
-        best_person_day = 0.0
+        # Best day = max team total (sum of everyone who logged that day)
+        best_team_day = 0.0
         best_date: dt.date | None = None
-        for day in all_days:
-            for u in metrics.users:
-                h = u.daily_hours[day.day - 1]
-                if h > best_person_day:
-                    best_person_day = h
-                    best_date = day
+        for day, team_h in zip(all_days, metrics.daily_team_totals):
+            if team_h > best_team_day:
+                best_team_day = team_h
+                best_date = day
 
         metrics.best_day = best_date
-        metrics.best_day_hours = best_person_day
-        metrics.daily_max = best_person_day
+        metrics.best_day_hours = best_team_day
+        metrics.daily_max = best_team_day
 
         work_days = [t for t in metrics.daily_team_totals if t > 0]
         metrics.active_days_team = len(work_days)

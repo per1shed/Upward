@@ -5,6 +5,11 @@ from html import escape
 
 from database import get_breakthroughs_for_year, get_display_name, get_user_stats
 from time_format import format_duration
+from ui_branding import (
+    CUSTOM_EMOJI_BREAKTHROUGH,
+    PLACEHOLDER_BREAKTHROUGH,
+    tg_emoji,
+)
 
 
 async def format_user_stats(user_id: int, heading: str | None = None) -> str:
@@ -29,7 +34,10 @@ async def format_user_stats(user_id: int, heading: str | None = None) -> str:
 
 async def format_breakthroughs_list(year: int) -> str:
     rows = await get_breakthroughs_for_year(year)
-    header = f"⭐ <b>Прорывы — {year}</b>\n"
+    header = (
+        f"{tg_emoji(CUSTOM_EMOJI_BREAKTHROUGH, PLACEHOLDER_BREAKTHROUGH)} "
+        f"<b>Прорывы — {year}</b>\n"
+    )
     if not rows:
         return (
             f"{header}\n"
