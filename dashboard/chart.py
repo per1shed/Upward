@@ -203,7 +203,7 @@ class ChartRenderer:
                     va="bottom",
                     fontsize=t.bar_label_size,
                     color=color,
-                    fontweight="medium",
+                    fontweight="bold",
                     zorder=6,
                     clip_on=False,
                 )

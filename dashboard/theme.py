@@ -44,7 +44,7 @@ class Theme:
     kpi_label_size: float = 9.0
     section_size: float = 12.0
     axis_size: float = 9.0
-    bar_label_size: float = 7.0
+    bar_label_size: float = 8.5
     body_size: float = 10.0
     small_size: float = 8.0
 
