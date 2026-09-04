@@ -9,9 +9,9 @@ from database import DB_PATH, init_db, register_user, upsert_entry
 
 # Same IDs as access.ALLOWED_USER_IDS
 USERS: list[tuple[int, str]] = [
-    (6205102102, "@Dalron_01"),
-    (5007535736, "@per1shedcs"),
-    (1109190677, "@vladiks5"),
+    (6205102102, "Диман"),
+    (5007535736, "Пашок"),
+    (1109190677, "Владос"),
 ]
 
 YEAR = 2026

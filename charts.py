@@ -22,6 +22,7 @@ from database import (
     get_month_entries,
     get_registered_users,
 )
+from access import display_name_for
 from keyboards import MONTH_NAMES
 from time_format import format_duration, format_duration_clock
 from ui_branding import (
@@ -605,7 +606,7 @@ async def _load_users_breakthrough_series(
 
     series: list[tuple[str, str, set[dt.date]]] = []
     for idx, (user_id, name) in enumerate(users):
-        display = await get_display_name(user_id) or name
+        display = display_name_for(user_id, await get_display_name(user_id) or name)
         dates = dates_by_user.get(user_id, set())
         color = USER_COLORS[idx % len(USER_COLORS)]
         series.append((display, color, dates))
@@ -630,7 +631,7 @@ async def _load_users_month_data(
 ) -> list[tuple[int, str, dict[dt.date, DayEntry]]]:
     result: list[tuple[int, str, dict[dt.date, DayEntry]]] = []
     for user_id, name in await get_registered_users():
-        display = await get_display_name(user_id) or name
+        display = display_name_for(user_id, await get_display_name(user_id) or name)
         await fill_missed_days_for_month(user_id, display, year, month)
         entries = await get_month_entries(user_id, year, month)
         result.append((user_id, display, entries))
@@ -652,7 +653,7 @@ async def build_progress_chart(
     highlight: dt.date | None = None,
 ) -> tuple[bytes, str]:
     """Один участник — для обратной совместимости."""
-    name = await get_display_name(user_id) or f"ID {user_id}"
+    name = display_name_for(user_id, await get_display_name(user_id) or f"ID {user_id}")
     await fill_missed_days_for_month(user_id, name, year, month)
     entries = await get_month_entries(user_id, year, month)
     title = f"{name} — {MONTH_NAMES[month]} {year}"

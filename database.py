@@ -340,11 +340,34 @@ async def get_user_stats(user_id: int) -> dict[str, float | int]:
         )
         month_hours = (await cursor.fetchone())[0]
 
+        cursor = await db.execute(
+            "SELECT joined_at FROM users WHERE user_id = ?",
+            (user_id,),
+        )
+        joined_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            "SELECT MIN(entry_date) FROM entries WHERE user_id = ?",
+            (user_id,),
+        )
+        first_entry_row = await cursor.fetchone()
+
     productive_days = int(productive_days or 0)
     total_hours = float(total_hours or 0)
     month_hours = float(month_hours or 0)
     today = today_local()
-    days_in_month_so_far = today.day
+
+    start_candidates: list[dt.date] = []
+    if joined_row and joined_row[0]:
+        try:
+            start_candidates.append(dt.datetime.fromisoformat(joined_row[0]).date())
+        except ValueError:
+            pass
+    if first_entry_row and first_entry_row[0]:
+        start_candidates.append(dt.date.fromisoformat(first_entry_row[0]))
+    start_day = min(start_candidates) if start_candidates else today
+
+    days_in_bot = max((today - start_day).days + 1, 1)
 
     return {
         "total_hours": total_hours,
@@ -352,9 +375,7 @@ async def get_user_stats(user_id: int) -> dict[str, float | int]:
         "best_day": float(best_day or 0),
         "month_hours": month_hours,
         "streak": await get_productive_streak(user_id),
-        "avg_daily": (
-            month_hours / days_in_month_so_far if days_in_month_so_far else 0.0
-        ),
+        "avg_daily": total_hours / days_in_bot,
     }
 
 

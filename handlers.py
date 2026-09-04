@@ -12,6 +12,7 @@ from aiogram.types import CallbackQuery, FSInputFile, Message, User
 
 from charts import build_team_progress_chart, chart_photo
 from context import get_screen, set_screen
+from access import display_name_for
 from database import (
     DayEntry,
     fill_all_missed_days,
@@ -129,6 +130,9 @@ async def delete_message_safe(message: Message | None) -> None:
 
 
 def display_name_from_user(user: User) -> str:
+    known = display_name_for(user.id)
+    if known:
+        return known
     if user.username:
         return f"@{user.username}"
     parts = [user.first_name or "", user.last_name or ""]

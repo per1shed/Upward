@@ -15,6 +15,17 @@ ALLOWED_USER_IDS: frozenset[int] = frozenset(
     }
 )
 
+DISPLAY_NAMES: dict[int, str] = {
+    6205102102: "Диман",
+    5007535736: "Пашок",
+    1109190677: "Владос",
+}
+
+
+def display_name_for(user_id: int, fallback: str = "") -> str:
+    return DISPLAY_NAMES.get(user_id) or fallback
+
+
 DENIED_TEXT = "Вы не являетесь пользователем этого бота."
 
 

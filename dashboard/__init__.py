@@ -11,6 +11,7 @@ from database import (
     get_month_entries,
     get_registered_users,
 )
+from access import display_name_for
 from keyboards import MONTH_NAMES
 from ui_branding import CUSTOM_EMOJI_PROGRESS, PLACEHOLDER_PROGRESS, tg_emoji
 
@@ -24,7 +25,7 @@ async def _load_users_month_data(
 ) -> list[tuple[str, dict[dt.date, DayEntry]]]:
     result: list[tuple[str, dict[dt.date, DayEntry]]] = []
     for user_id, name in await get_registered_users():
-        display = await get_display_name(user_id) or name
+        display = display_name_for(user_id, await get_display_name(user_id) or name)
         await fill_missed_days_for_month(user_id, display, year, month)
         entries = await get_month_entries(user_id, year, month)
         result.append((display, entries))

@@ -4,6 +4,7 @@ import datetime as dt
 from html import escape
 
 from database import get_breakthroughs_for_year, get_display_name, get_user_stats
+from access import display_name_for
 from time_format import format_duration
 from ui_branding import (
     CUSTOM_EMOJI_BREAKTHROUGH,
@@ -14,7 +15,7 @@ from ui_branding import (
 
 async def format_user_stats(user_id: int, heading: str | None = None) -> str:
     stats = await get_user_stats(user_id)
-    name = await get_display_name(user_id) or f"ID {user_id}"
+    name = display_name_for(user_id, await get_display_name(user_id) or f"ID {user_id}")
     header = heading if heading is not None else name
     best = stats["best_day"]
     streak = int(stats["streak"])
@@ -47,7 +48,7 @@ async def format_breakthroughs_list(year: int) -> str:
 
     by_user: dict[tuple[int, str], list[tuple[dt.date, str]]] = {}
     for user_id, name, entry_date, note in rows:
-        display = await get_display_name(user_id) or name
+        display = display_name_for(user_id, await get_display_name(user_id) or name)
         by_user.setdefault((user_id, display), []).append((entry_date, note))
 
     blocks: list[str] = [header]
