@@ -21,6 +21,13 @@ DISPLAY_NAMES: dict[int, str] = {
     1109190677: "Владос",
 }
 
+# Диман → Пашок → Владос
+USER_ORDER: tuple[int, ...] = (
+    6205102102,
+    5007535736,
+    1109190677,
+)
+
 # Фиксированные цвета участников (не зависят от порядка в списке)
 USER_COLORS: dict[int, str] = {
     6205102102: "#0A84FF",  # Диман — синий
@@ -37,6 +44,8 @@ _FALLBACK_COLORS: tuple[str, ...] = (
     "#64D2FF",
 )
 
+_USER_ORDER_INDEX = {uid: i for i, uid in enumerate(USER_ORDER)}
+
 
 def display_name_for(user_id: int, fallback: str = "") -> str:
     return DISPLAY_NAMES.get(user_id) or fallback
@@ -46,6 +55,14 @@ def color_for(user_id: int, fallback_index: int = 0) -> str:
     if user_id in USER_COLORS:
         return USER_COLORS[user_id]
     return _FALLBACK_COLORS[fallback_index % len(_FALLBACK_COLORS)]
+
+
+def sort_users(users: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Sort users: Диман, Пашок, Владос, then others by id."""
+    return sorted(
+        users,
+        key=lambda row: (_USER_ORDER_INDEX.get(row[0], len(USER_ORDER)), row[0]),
+    )
 
 
 DENIED_TEXT = "Вы не являетесь пользователем этого бота."

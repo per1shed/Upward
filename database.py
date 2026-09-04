@@ -101,6 +101,8 @@ async def register_user(user_id: int, display_name: str) -> None:
 
 
 async def get_registered_users() -> list[tuple[int, str]]:
+    from access import sort_users
+
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
@@ -109,7 +111,8 @@ async def get_registered_users() -> list[tuple[int, str]]:
             """
         )
         rows = await cursor.fetchall()
-    return [(int(uid), name or f"ID {uid}") for uid, name in rows]
+    users = [(int(uid), name or f"ID {uid}") for uid, name in rows]
+    return sort_users(users)
 
 
 async def user_exists(user_id: int) -> bool:
