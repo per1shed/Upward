@@ -27,7 +27,6 @@ async def format_user_stats(user_id: int, heading: str | None = None) -> str:
         f"Всего часов: <b>{format_duration(stats['total_hours'])}</b>\n"
         f"Продуктивных дней: <b>{stats['productive_days']}</b>\n"
         f"{streak_line}"
-        f"В этом месяце: <b>{format_duration(stats['month_hours'])}</b>\n"
         f"В среднем в день уделяется <b>{format_duration(stats['avg_daily'])}</b>\n"
         f"Рекорд за день: <b>{format_duration(best) if best > 0 else '—'}</b>"
     )

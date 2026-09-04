@@ -319,7 +319,6 @@ async def get_productive_streak(user_id: int) -> int:
 
 async def get_user_stats(user_id: int) -> dict[str, float | int]:
     """Статистика: день с hours > 0 считается одним продуктивным днём."""
-    month_start = today_local().replace(day=1).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
@@ -334,51 +333,15 @@ async def get_user_stats(user_id: int) -> dict[str, float | int]:
         )
         total_hours, productive_days, best_day = await cursor.fetchone()
 
-        cursor = await db.execute(
-            """
-            SELECT COALESCE(SUM(hours), 0) FROM entries
-            WHERE user_id = ? AND entry_date >= ?
-            """,
-            (user_id, month_start),
-        )
-        month_hours = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(
-            "SELECT joined_at FROM users WHERE user_id = ?",
-            (user_id,),
-        )
-        joined_row = await cursor.fetchone()
-
-        cursor = await db.execute(
-            "SELECT MIN(entry_date) FROM entries WHERE user_id = ?",
-            (user_id,),
-        )
-        first_entry_row = await cursor.fetchone()
-
     productive_days = int(productive_days or 0)
     total_hours = float(total_hours or 0)
-    month_hours = float(month_hours or 0)
-    today = today_local()
-
-    start_candidates: list[dt.date] = []
-    if joined_row and joined_row[0]:
-        try:
-            start_candidates.append(dt.datetime.fromisoformat(joined_row[0]).date())
-        except ValueError:
-            pass
-    if first_entry_row and first_entry_row[0]:
-        start_candidates.append(dt.date.fromisoformat(first_entry_row[0]))
-    start_day = min(start_candidates) if start_candidates else today
-
-    days_in_bot = max((today - start_day).days + 1, 1)
 
     return {
         "total_hours": total_hours,
         "productive_days": productive_days,
         "best_day": float(best_day or 0),
-        "month_hours": month_hours,
         "streak": await get_productive_streak(user_id),
-        "avg_daily": total_hours / days_in_bot,
+        "avg_daily": (total_hours / productive_days) if productive_days else 0.0,
     }
 
 
