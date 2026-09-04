@@ -515,10 +515,10 @@ class DashboardRenderer:
         t = self.theme
         ax = fig.add_subplot(subplot_spec)
         self._card(ax)
-        self._avatar(ax, 0.12, 0.86, user, r=0.065)
+        self._avatar(ax, 0.12, 0.78, user, r=0.07)
         ax.text(
             0.24,
-            0.86,
+            0.78,
             user.name,
             ha="left",
             va="center",
@@ -527,44 +527,27 @@ class DashboardRenderer:
             fontweight="semibold",
             zorder=3,
         )
-
-        # Active-days area chart — sits under the large total (as on the mock)
-        spark = ax.inset_axes([0.06, 0.30, 0.88, 0.42], zorder=1)
-        spark.set_facecolor("none")
-        spark.axis("off")
-        n = max(last_day, 1)
-        xs = list(range(n))
-        ys = list(user.daily_hours[:n]) + [0.0] * max(0, n - len(user.daily_hours))
-        peak = max(ys) if ys else 0.0
-        y_top = max(peak * 1.35, 0.35)
-        spark.fill_between(xs, ys, color=user.color, alpha=0.16, linewidth=0)
-        spark.plot(
-            xs,
-            ys,
-            color=user.color,
-            linewidth=1.35,
-            solid_capstyle="round",
-            solid_joinstyle="round",
-            zorder=2,
-        )
-        spark.axhline(0, color=user.color, alpha=0.22, linewidth=0.8, zorder=1)
-        spark.set_xlim(0, max(n - 1, 1))
-        spark.set_ylim(0, y_top)
-
-        # Total overlaps the chart peaks (drawn on spark so it stays on top)
-        spark.text(
-            0.0,
-            0.98,
+        ax.text(
+            0.08,
+            0.58,
             MetricsCalculator.fmt(user.total_hours),
-            transform=spark.transAxes,
             ha="left",
-            va="top",
-            fontsize=t.kpi_value_size + 3,
+            va="center",
+            fontsize=t.kpi_value_size + 2,
             color=t.ink,
             fontweight="bold",
-            zorder=5,
-            clip_on=False,
+            zorder=3,
         )
+
+        # Sparkline — как раньше: узкая полоса под итогом, без наложения
+        spark = ax.inset_axes([0.08, 0.34, 0.84, 0.16])
+        spark.axis("off")
+        xs = list(range(last_day))
+        ys = user.daily_hours
+        spark.plot(xs, ys, color=user.color, linewidth=1.4, solid_capstyle="round")
+        spark.fill_between(xs, ys, color=user.color, alpha=0.12)
+        spark.set_xlim(0, max(last_day - 1, 1))
+        spark.set_ylim(0, max(max(ys) * 1.2, 0.1) if ys else 1)
 
         stats = [
             ("среднее", MetricsCalculator.fmt(user.avg_active_hours)),
@@ -575,7 +558,7 @@ class DashboardRenderer:
             x = 0.08 + i * 0.31
             ax.text(
                 x,
-                0.20,
+                0.22,
                 val,
                 ha="left",
                 va="center",
@@ -586,7 +569,7 @@ class DashboardRenderer:
             )
             ax.text(
                 x,
-                0.09,
+                0.10,
                 lab,
                 ha="left",
                 va="center",

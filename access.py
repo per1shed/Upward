@@ -21,9 +21,31 @@ DISPLAY_NAMES: dict[int, str] = {
     1109190677: "Владос",
 }
 
+# Фиксированные цвета участников (не зависят от порядка в списке)
+USER_COLORS: dict[int, str] = {
+    6205102102: "#0A84FF",  # Диман — синий
+    5007535736: "#FF9F0A",  # Пашок — оранжевый
+    1109190677: "#30D158",  # Владос — зелёный
+}
+
+_FALLBACK_COLORS: tuple[str, ...] = (
+    "#0A84FF",
+    "#FF9F0A",
+    "#30D158",
+    "#5E5CE6",
+    "#FF375F",
+    "#64D2FF",
+)
+
 
 def display_name_for(user_id: int, fallback: str = "") -> str:
     return DISPLAY_NAMES.get(user_id) or fallback
+
+
+def color_for(user_id: int, fallback_index: int = 0) -> str:
+    if user_id in USER_COLORS:
+        return USER_COLORS[user_id]
+    return _FALLBACK_COLORS[fallback_index % len(_FALLBACK_COLORS)]
 
 
 DENIED_TEXT = "Вы не являетесь пользователем этого бота."

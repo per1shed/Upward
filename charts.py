@@ -22,7 +22,7 @@ from database import (
     get_month_entries,
     get_registered_users,
 )
-from access import display_name_for
+from access import color_for, display_name_for
 from keyboards import MONTH_NAMES
 from time_format import format_duration, format_duration_clock
 from ui_branding import (
@@ -608,7 +608,7 @@ async def _load_users_breakthrough_series(
     for idx, (user_id, name) in enumerate(users):
         display = display_name_for(user_id, await get_display_name(user_id) or name)
         dates = dates_by_user.get(user_id, set())
-        color = USER_COLORS[idx % len(USER_COLORS)]
+        color = color_for(user_id, idx)
         series.append((display, color, dates))
     return series
 
