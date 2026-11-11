@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
+import os
 from pathlib import Path
 from typing import NamedTuple
 
@@ -9,7 +10,7 @@ import aiosqlite
 
 from timezone_utils import today_local
 
-DB_PATH = Path(__file__).resolve().parent / "progress.db"
+DB_PATH = Path(os.getenv("UPWARD_DB") or (Path(__file__).resolve().parent / "progress.db"))
 
 
 class DayEntry(NamedTuple):
@@ -83,6 +84,9 @@ async def init_db() -> None:
             """
         )
         await db.commit()
+    from pavel import ensure_schema
+
+    await ensure_schema()
 
 
 async def register_user(user_id: int, display_name: str) -> None:

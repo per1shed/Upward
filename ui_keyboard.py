@@ -40,11 +40,13 @@ async def _strip_keyboard(bot: Bot, chat_id: int, message_id: int) -> None:
     await remove_ui_keyboard_message(chat_id, message_id)
 
 
+async def track_keyboard_id(chat_id: int, message_id: int) -> None:
+    _memory_ids(chat_id).add(message_id)
+    await add_ui_keyboard_message(chat_id, message_id)
+
+
 async def track_keyboard_message(message: Message) -> None:
-    chat_id = message.chat.id
-    mid = message.message_id
-    _memory_ids(chat_id).add(mid)
-    await add_ui_keyboard_message(chat_id, mid)
+    await track_keyboard_id(message.chat.id, message.message_id)
 
 
 async def detach_keyboards(
@@ -67,6 +69,21 @@ async def detach_keyboards(
         _last_keyboard_messages.pop(chat_id, None)
     else:
         _last_keyboard_messages[chat_id] = {keep_message_id}
+
+
+async def strip_nearby_keyboards(
+    bot: Bot,
+    chat_id: int,
+    keep_message_id: int,
+    span: int = 80,
+) -> None:
+    """Убирает клавиатуры со всех недавних сообщений, кроме последнего."""
+    await detach_keyboards(bot, chat_id, keep_message_id=keep_message_id)
+    start = max(1, keep_message_id - span)
+    for mid in range(keep_message_id - 1, start - 1, -1):
+        await _strip_keyboard(bot, chat_id, mid)
+    _last_keyboard_messages[chat_id] = {keep_message_id}
+    await add_ui_keyboard_message(chat_id, keep_message_id)
 
 
 async def answer_tracked(

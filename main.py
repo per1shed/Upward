@@ -7,10 +7,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from aiogram.types import MenuButtonCommands
+
+from access import AccessMiddleware, PASHOK_ID
 from config import load_settings
 from database import fill_all_missed_days, init_db
-from access import AccessMiddleware
 from handlers import router
+from pavel_handlers import router as pavel_router
 from timezone_utils import TZ
 
 
@@ -30,10 +33,15 @@ async def run_bot() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(AccessMiddleware())
     dp.callback_query.middleware(AccessMiddleware())
+    dp.include_router(pavel_router)
     dp.include_router(router)
 
     me = await bot.get_me()
     await fill_all_missed_days()
+    try:
+        await bot.set_chat_menu_button(chat_id=PASHOK_ID, menu_button=MenuButtonCommands())
+    except Exception:
+        logging.getLogger("upward").exception("menu button")
     print(f"🚀 Бот @{me.username} запущен ({TZ})")
 
     async def auto_zero_loop() -> None:

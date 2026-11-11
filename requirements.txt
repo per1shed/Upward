@@ -1,4 +1,6 @@
-aiogram==3.20.0.post0
+aiogram==3.31.0
 aiosqlite==0.21.0
 python-dotenv==1.1.0
 matplotlib==3.10.3
+fastapi==0.115.6
+uvicorn==0.34.0

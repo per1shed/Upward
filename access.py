@@ -21,7 +21,9 @@ DISPLAY_NAMES: dict[int, str] = {
     1109190677: "Владос",
 }
 
-# Диман → Пашок → Владос
+# Пашок — единственный, у кого в меню разделы Tempo.
+PASHOK_ID = 5007535736
+WEBAPP_USER_IDS: frozenset[int] = frozenset({PASHOK_ID})
 USER_ORDER: tuple[int, ...] = (
     6205102102,
     5007535736,

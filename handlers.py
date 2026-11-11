@@ -26,7 +26,7 @@ from keyboards import (
     breakthrough_calendar_keyboard,
     cancel_keyboard,
     chart_nav_keyboard,
-    main_menu_keyboard,
+    main_menu_markup,
     time_prompt_keyboard,
 )
 from texts import format_breakthroughs_list, format_user_stats
@@ -157,7 +157,7 @@ async def ensure_user_callback(callback: CallbackQuery) -> int | None:
     return callback.from_user.id
 
 
-async def send_team_chart(message: Message, year: int, month: int) -> None:
+async def send_team_chart(message: Message, year: int, month: int, user_id: int | None = None) -> None:
     loading = await answer_tracked(message, CHART_LOADING_TEXT)
     try:
         await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
@@ -166,20 +166,20 @@ async def send_team_chart(message: Message, year: int, month: int) -> None:
             message,
             chart_photo(png),
             caption=caption,
-            reply_markup=chart_nav_keyboard(year, month),
+            reply_markup=chart_nav_keyboard(year, month, user_id),
         )
     finally:
         await delete_message_safe(loading)
 
 
 async def send_breakthrough_list(
-    message: Message, year: int, month: int
+    message: Message, year: int, month: int, user_id: int | None = None
 ) -> None:
     text = await format_breakthroughs_list(year)
     await answer_tracked(
         message,
         text,
-        reply_markup=breakthrough_calendar_keyboard(year, month),
+        reply_markup=breakthrough_calendar_keyboard(year, month, user_id),
     )
 
 
@@ -188,7 +188,7 @@ async def send_full_statistics(message: Message, user_id: int) -> None:
     set_screen(user_id, "stats", chart_year=today.year, chart_month=today.month)
 
     await answer_tracked(message, await build_team_summary())
-    await send_team_chart(message, today.year, today.month)
+    await send_team_chart(message, today.year, today.month, user_id)
 
 
 def _log_input_hints() -> str:
@@ -229,11 +229,11 @@ def time_prompt_text(today: dt.date, existing: DayEntry | None = None) -> str:
     return text
 
 
-async def show_main_menu(message: Message) -> None:
+async def show_main_menu(message: Message, user_id: int) -> None:
     await answer_photo_tracked(
         message,
         FSInputFile(WELCOME_PHOTO_PATH),
-        reply_markup=main_menu_keyboard(),
+        reply_markup=await main_menu_markup(user_id),
     )
 
 
@@ -242,7 +242,7 @@ async def restore_screen(message: Message, state: FSMContext, user_id: int) -> N
     screen = ctx.get("screen", "menu")
 
     if screen == "menu":
-        await show_main_menu(message)
+        await show_main_menu(message, user_id)
         return
 
     if screen == "stats":
@@ -262,11 +262,11 @@ async def restore_screen(message: Message, state: FSMContext, user_id: int) -> N
         await answer_tracked(
             message,
             BREAKTHROUGH_NOTE_PROMPT,
-            reply_markup=cancel_keyboard(),
+            reply_markup=cancel_keyboard(user_id),
         )
         return
 
-    await show_main_menu(message)
+    await show_main_menu(message, user_id)
 
 
 async def ask_time_for_today(
@@ -280,7 +280,7 @@ async def ask_time_for_today(
     await state.update_data(entry_date=today.isoformat())
     await state.set_state(LogTime.waiting_time)
     text = time_prompt_text(today, existing)
-    markup = time_prompt_keyboard()
+    markup = time_prompt_keyboard(user_id)
 
     if isinstance(target, Message):
         await answer_tracked(target, text, reply_markup=markup)
@@ -319,7 +319,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     set_screen(user_id, "menu")
-    await show_main_menu(message)
+    await show_main_menu(message, user_id)
 
 
 @router.message(Command("log"))
@@ -347,7 +347,7 @@ async def menu_home(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     set_screen(user_id, "menu")
     if callback.message:
-        await show_main_menu(callback.message)
+        await show_main_menu(callback.message, user_id)
 
 
 @router.callback_query(F.data == "menu:log")
@@ -374,7 +374,7 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         await answer_tracked(
             message,
             "Отметить можно только сегодня. Нажмите " + mention_log_button() + " снова.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_markup(user_id),
         )
         return
 
@@ -394,7 +394,7 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         await answer_tracked(
             message,
             f"Не удалось разобрать время.\n\n{_log_input_hints()}",
-            reply_markup=time_prompt_keyboard(),
+            reply_markup=time_prompt_keyboard(user_id),
         )
         return
 
@@ -411,7 +411,7 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         await answer_tracked(
             message,
             f"Сумма за день не может превышать 24 часа.\n\n{_log_input_hints()}",
-            reply_markup=time_prompt_keyboard(),
+            reply_markup=time_prompt_keyboard(user_id),
         )
         return
 
@@ -435,7 +435,7 @@ async def log_time_input(message: Message, state: FSMContext) -> None:
         )
 
     await answer_done(message, result_text)
-    await send_team_chart(message, today.year, today.month)
+    await send_team_chart(message, today.year, today.month, user_id)
 
 
 async def _mark_rest_day(
@@ -451,7 +451,7 @@ async def _mark_rest_day(
     await state.clear()
     set_screen(user_id, "menu")
     await answer_done(message, format_rest_done_message())
-    await send_team_chart(message, today.year, today.month)
+    await send_team_chart(message, today.year, today.month, user_id)
 
 
 async def _start_breakthrough(
@@ -478,7 +478,7 @@ async def _start_breakthrough(
     await answer_tracked(
         message,
         BREAKTHROUGH_NOTE_PROMPT,
-        reply_markup=cancel_keyboard(),
+        reply_markup=cancel_keyboard(user_id),
     )
 
 
@@ -497,7 +497,7 @@ async def log_rest_button(callback: CallbackQuery, state: FSMContext) -> None:
         await answer_tracked(
             callback.message,
             "Отметить можно только сегодня. Нажмите " + mention_log_button() + " снова.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_markup(user_id),
         )
         return
 
@@ -520,7 +520,7 @@ async def log_breakthrough_button(callback: CallbackQuery, state: FSMContext) ->
         await answer_tracked(
             callback.message,
             "Отметить можно только сегодня. Нажмите " + mention_log_button() + " снова.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_markup(user_id),
         )
         return
 
@@ -542,7 +542,7 @@ async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
         await answer_tracked(
             message,
             "Описать прорыв можно только за сегодня. Нажмите " + mention_log_button() + " снова.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_markup(user_id),
         )
         return
 
@@ -551,7 +551,7 @@ async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
         await answer_tracked(
             message,
             "Описание не должно быть пустым.\n\n" + BREAKTHROUGH_NOTE_PROMPT,
-            reply_markup=cancel_keyboard(),
+            reply_markup=cancel_keyboard(user_id),
         )
         return
     if len(note) > MAX_BREAKTHROUGH_NOTE_LEN:
@@ -559,7 +559,7 @@ async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
             message,
             f"Слишком длинно: максимум {MAX_BREAKTHROUGH_NOTE_LEN} символов.\n\n"
             + BREAKTHROUGH_NOTE_PROMPT,
-            reply_markup=cancel_keyboard(),
+            reply_markup=cancel_keyboard(user_id),
         )
         return
 
@@ -572,14 +572,14 @@ async def breakthrough_note_input(message: Message, state: FSMContext) -> None:
             message,
             "Не удалось сохранить описание: день прорыва не найден.\n"
             "Отметьте прорыв снова через " + mention_log_button() + ".",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_markup(user_id),
         )
         return
 
     entry = await get_entry(user_id, today)
     hours = entry.hours if entry else 0.0
     await answer_done(message, format_breakthrough_done_message(hours, note))
-    await send_team_chart(message, today.year, today.month)
+    await send_team_chart(message, today.year, today.month, user_id)
 
 
 @router.callback_query(F.data == "menu:stats")
@@ -606,7 +606,7 @@ async def chart_breakthroughs(callback: CallbackQuery) -> None:
     set_screen(viewer_id, "stats", chart_year=year, chart_month=month)
 
     if callback.message:
-        await send_breakthrough_list(callback.message, year, month)
+        await send_breakthrough_list(callback.message, year, month, viewer_id)
 
 
 @router.callback_query(F.data.startswith("chart:nav:"))
@@ -622,7 +622,7 @@ async def chart_nav(callback: CallbackQuery) -> None:
     set_screen(viewer_id, "stats", chart_year=year, chart_month=month)
 
     if callback.message:
-        await send_team_chart(callback.message, year, month)
+        await send_team_chart(callback.message, year, month, viewer_id)
 
 
 @router.message(F.text, StateFilter(None))
