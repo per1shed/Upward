@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message
 
 from charts import chart_photo
 from keyboards import (
-    cancel_keyboard,
+    finance_cancel_keyboard,
     finance_keyboard,
     goal_keyboard,
     plan_keyboard,
@@ -45,6 +45,7 @@ from pavel_charts import (
     DEBT,
     MORAL,
     PHYSICAL,
+    finance_lines,
     render_bars,
     render_finance,
     render_plan,
@@ -107,18 +108,10 @@ async def send_finance(message: Message, user_id: int, year: int, month: int) ->
     cash = await month_series(user_id, "cash", year, month, carry=True)
     debt = await month_series(user_id, "debt", year, month, carry=True)
     balance = await month_series(user_id, "balance", year, month, carry=True)
-    money: list[float | None] = []
-    debts: list[float | None] = []
-    for cash_value, debt_value in zip(cash, debt):
-        if debt_value in (None, 0):
-            money.append(None)
-            debts.append(None)
-        else:
-            money.append(cash_value)
-            debts.append(debt_value)
+    money, debts, net = finance_lines(cash, debt, balance)
     png = render_finance(
         [
-            ("Баланс", balance, BALANCE),
+            ("Баланс", net, BALANCE),
             ("Деньги", money, CASH),
             ("Долги", debts, DEBT),
         ],
@@ -213,8 +206,8 @@ async def edit_balance(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PavelInput.cash)
     await answer_tracked(
         callback.message,
-        "Впишите баланс. Можно с минусом.",
-        reply_markup=cancel_keyboard(callback.from_user.id),
+        "Впишите, сколько сейчас денег. Долги не изменятся.",
+        reply_markup=finance_cancel_keyboard(callback.from_user.id),
     )
 
 
@@ -227,7 +220,7 @@ async def edit_debt(callback: CallbackQuery, state: FSMContext) -> None:
     await answer_tracked(
         callback.message,
         "Впишите сумму долгов.",
-        reply_markup=cancel_keyboard(callback.from_user.id),
+        reply_markup=finance_cancel_keyboard(callback.from_user.id),
     )
 
 
@@ -236,13 +229,13 @@ async def finance_balance(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id if message.from_user else 0
     if not _only(user_id):
         return
-    balance = parse_amount(message.text or "")
-    if balance is None:
-        await answer_tracked(message, "Впишите сумму баланса.", reply_markup=cancel_keyboard(user_id))
+    cash = parse_amount(message.text or "")
+    if cash is None:
+        await answer_tracked(message, "Впишите сумму.", reply_markup=finance_cancel_keyboard(user_id))
         return
     today = today_local()
     debt = await latest_value(user_id, "debt", today.year, today.month) or 0
-    await _remember_finance(user_id, balance + debt, debt)
+    await _remember_finance(user_id, cash, debt)
     await state.clear()
     await send_finance(message, user_id, today.year, today.month)
 
@@ -254,7 +247,7 @@ async def finance_debt(message: Message, state: FSMContext) -> None:
         return
     debt = parse_amount(message.text or "")
     if debt is None or debt < 0:
-        await answer_tracked(message, "Впишите сумму долгов, ноль или больше.", reply_markup=cancel_keyboard(user_id))
+        await answer_tracked(message, "Впишите сумму долгов, ноль или больше.", reply_markup=finance_cancel_keyboard(user_id))
         return
     today = today_local()
     cash = await latest_value(user_id, "cash", today.year, today.month) or 0

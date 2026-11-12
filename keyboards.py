@@ -227,3 +227,9 @@ def cancel_keyboard(user_id: int | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[_button("« Отмена", "menu:home", user_id=user_id)]]
     )
+
+
+def finance_cancel_keyboard(user_id: int | None = None) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[_button("« Отмена", "p:fin", user_id=user_id)]]
+    )

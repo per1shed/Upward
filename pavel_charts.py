@@ -28,7 +28,7 @@ TRAFFIC = "#FF9F0A"
 
 def _png(fig) -> bytes:
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight", facecolor=BG)
+    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return buffer.getvalue()
 
@@ -174,6 +174,49 @@ def _glow_to_zero(ax, tracks: list[tuple[str, np.ndarray, np.ndarray]]) -> None:
         ax.fill_between(grid, values, edge, where=inside, color=color, alpha=0.22, linewidth=0, zorder=2)
 
 
+def finance_lines(
+    cash: list[float | None],
+    debt: list[float | None],
+    balance: list[float | None],
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """Синяя линия есть, пока долги больше нуля, и не поднимается выше них."""
+    money: list[float | None] = []
+    debts: list[float | None] = []
+    net: list[float | None] = []
+    debt_drawn = False
+    debt_closed = False
+    for cash_value, debt_value, balance_value in zip(cash, debt, balance):
+        if cash_value is None and debt_value is None and balance_value is None:
+            money.append(None)
+            debts.append(None)
+            net.append(None)
+            continue
+        if debt_value in (None, 0):
+            if debt_drawn and not debt_closed:
+                debts.append(0.0)
+                net.append(0.0)
+                debt_closed = True
+            else:
+                debts.append(None)
+                net.append(None)
+            if cash_value is not None:
+                money.append(cash_value)
+            elif balance_value is not None:
+                money.append(balance_value)
+            else:
+                money.append(None)
+            continue
+        debt_drawn = True
+        debt_closed = False
+        money.append(cash_value)
+        debts.append(debt_value)
+        if balance_value is not None and balance_value > debt_value:
+            net.append(debt_value)
+        else:
+            net.append(balance_value)
+    return money, debts, net
+
+
 def _segments(points: list[float | None]) -> list[tuple[np.ndarray, np.ndarray]]:
     segments: list[tuple[np.ndarray, np.ndarray]] = []
     xs: list[float] = []
@@ -195,6 +238,192 @@ def _segments(points: list[float | None]) -> list[tuple[np.ndarray, np.ndarray]]
     return segments
 
 
+MONTHS_TITLE = (
+    "",
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+)
+WEEKDAYS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+CARD = "#F5F5F7"
+
+
+def _pad_month(points: list[float | None], count: int) -> list[float | None]:
+    data = list(points)
+    if len(data) < count:
+        data.extend([None] * (count - len(data)))
+    return data[:count]
+
+
+def _last_value(points: list[float | None]) -> float | None:
+    for value in reversed(points):
+        if value is not None:
+            return float(value)
+    return None
+
+
+def _ruble(value: float | None) -> str:
+    if value is None:
+        return "—"
+    number = int(round(value))
+    sign = "−" if number < 0 else ""
+    return sign + f"{abs(number):,}".replace(",", " ") + " ₽"
+
+
+def _axis_compact(value: float, _pos: int) -> str:
+    number = int(round(value))
+    sign = "−" if number < 0 else ""
+    magnitude = abs(number)
+    if magnitude >= 1000:
+        thousands = magnitude / 1000
+        text = f"{thousands:.0f}k" if abs(thousands - round(thousands)) < 0.05 else f"{thousands:.1f}k"
+    else:
+        text = f"{magnitude:,}".replace(",", " ")
+    return sign + text
+
+
+def _money_vertices(
+    money: list[float | None],
+    debt: list[float | None],
+    balance: list[float | None],
+) -> list[list[tuple[float, float]]]:
+    """Деньги идут до первого пересечения с долгом или балансом и там обрываются."""
+    segments: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+    previous: int | None = None
+    for index, value in enumerate(money):
+        gap = previous is not None and index != previous + 1
+        if value is None or gap:
+            if current:
+                segments.append(current)
+                current = []
+        if value is None:
+            previous = None
+            continue
+        current.append((float(index), float(value)))
+        previous = index
+    if current:
+        segments.append(current)
+    if not segments:
+        return segments
+    last = segments[-1]
+    last_index = int(last[-1][0])
+    level = last[-1][1]
+    nxt = last_index + 1
+    if nxt >= len(money) or money[nxt] is not None:
+        return segments
+    crossings: list[float] = []
+    for series in (debt, balance):
+        if nxt >= len(series):
+            continue
+        start = series[last_index] if last_index < len(series) else None
+        end = series[nxt]
+        if start is None or end is None or end == start:
+            continue
+        if (start - level) * (end - level) > 0:
+            continue
+        share = (level - start) / (end - start)
+        if 0 < share <= 1:
+            crossings.append(share)
+    if crossings:
+        last.append((last_index + min(crossings), level))
+    return segments
+
+
+def _snapshot(
+    money: list[float | None],
+    debt: list[float | None],
+    balance: list[float | None],
+) -> tuple[float | None, float | None, float | None]:
+    """Один день: баланс с учётом долгов всегда равен балансу минус долги."""
+    count = max(len(money), len(debt), len(balance))
+    for index in range(count - 1, -1, -1):
+        cash_value = money[index] if index < len(money) else None
+        debt_value = debt[index] if index < len(debt) else None
+        balance_value = balance[index] if index < len(balance) else None
+        if cash_value is None and debt_value is None and balance_value is None:
+            continue
+        if cash_value is not None:
+            owed = 0.0 if debt_value in (None, 0) else float(debt_value)
+            return float(cash_value), owed, float(cash_value) - owed
+        if balance_value is None:
+            continue
+        owed = 0.0 if debt_value in (None, 0) else float(debt_value)
+        return float(balance_value) + owed, owed, float(balance_value)
+    return None, None, None
+
+
+def _metric_cards(fig, cash: list[float | None], debt: list[float | None], balance: list[float | None]) -> None:
+    cash_now, debt_now, net_now = _snapshot(cash, debt, balance)
+    specs = (
+        (CASH, "Баланс", cash_now),
+        (DEBT, "Долги", debt_now),
+        (BALANCE, "Баланс с учётом долгов", net_now),
+    )
+    gap = 0.018
+    left = 0.045
+    width = (0.91 - 2 * gap) / 3
+    for index, (color, title, value) in enumerate(specs):
+        card = fig.add_axes([left + index * (width + gap), 0.735, width, 0.12])
+        card.set_xlim(0, 1)
+        card.set_ylim(0, 1)
+        card.axis("off")
+        card.add_patch(
+            FancyBboxPatch(
+                (0.0, 0.02),
+                1.0,
+                0.96,
+                boxstyle="round,pad=0.008,rounding_size=0.06",
+                facecolor=CARD,
+                edgecolor="#EEEEF0",
+                linewidth=0.8,
+                mutation_aspect=0.28,
+                transform=card.transAxes,
+            )
+        )
+        card.add_patch(
+            plt.Rectangle((0.04, 0.24), 0.015, 0.52, color=color, transform=card.transAxes, linewidth=0, zorder=3)
+        )
+        card.text(0.09, 0.66, title, color=MUTED, fontsize=8.5, va="center", ha="left", transform=card.transAxes)
+        card.text(
+            0.09,
+            0.32,
+            _ruble(value),
+            color=INK,
+            fontsize=13,
+            fontweight="bold",
+            va="center",
+            ha="left",
+            transform=card.transAxes,
+        )
+
+
+def _finance_days(ax, count: int, year: int, month: int) -> None:
+    ax.set_xticks(list(range(count)))
+    labels = []
+    weekend = []
+    for day in range(1, count + 1):
+        stamp = dt.date(year, month, day)
+        labels.append(f"{day}\n{WEEKDAYS[stamp.weekday()]}")
+        weekend.append(stamp.weekday() >= 5)
+        if stamp.weekday() >= 5:
+            ax.axvspan(day - 1.5, day - 0.5, color="#F2F2F6", zorder=0)
+    ax.set_xticklabels(labels, fontsize=6.2)
+    for label, is_weekend in zip(ax.get_xticklabels(), weekend):
+        label.set_color("#FF3B30" if is_weekend else MUTED)
+    ax.set_xlim(-0.6, count - 0.4)
+    ax.tick_params(axis="x", length=0, pad=2)
+
+
 def render_finance(
     series: list[tuple[str, list[float | None], str]],
     *,
@@ -202,71 +431,58 @@ def render_finance(
     month: int,
 ) -> bytes:
     count = calendar.monthrange(year, month)[1]
-    fig, ax = plt.subplots(figsize=(8.4, 4.6), facecolor=BG)
-    _style(ax, "")
-    _weekend_bands(ax, count, year, month)
-    prepared = [(title, points, color) for title, points, color in series]
-    values = [float(value) for _title, points, _color in prepared for value in points if value is not None]
+    prepared = [(title, _pad_month(points, count), color) for title, points, color in series]
+    by_color = {color: points for _title, points, color in prepared}
+    money = by_color.get(CASH, [None] * count)
+    debt = by_color.get(DEBT, [None] * count)
+    balance = by_color.get(BALANCE, [None] * count)
+    fig = plt.figure(figsize=(10.4, 6.5), facecolor="white")
+    fig.text(0.045, 0.955, "Финансы", fontsize=18, fontweight="bold", color=INK, ha="left", va="top")
+    fig.text(0.045, 0.905, f"{MONTHS_TITLE[month]} {year}", fontsize=12, color=MUTED, ha="left", va="top")
+    _metric_cards(fig, money, debt, balance)
+    ax = fig.add_axes([0.055, 0.08, 0.90, 0.62])
+    ax.set_facecolor("white")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.grid(axis="y", linestyle=":", linewidth=0.7, color=GRID, zorder=0)
+    ax.tick_params(axis="y", colors=MUTED, labelsize=9, length=0)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(_axis_compact))
+    values = [float(value) for points in (money, debt, balance) for value in points if value is not None]
+    money_lines = _money_vertices(money, debt, balance)
+    values.extend(point[1] for line in money_lines for point in line)
     if values:
         lo, hi = _line_bounds(values)
         if lo > 0:
-            lo = 0
+            lo = 0.0
         if hi < 0:
-            hi = 0
+            hi = 0.0
         span = max(hi - lo, 1)
-        ax.set_ylim(lo, hi + span * 0.08)
-        if lo < 0 < hi or lo == 0 or hi == 0:
-            ax.axhline(0, color=MUTED, linewidth=0.8, alpha=0.45, zorder=2.5)
-    tracks = []
-    for _title, points, color in prepared:
-        for xs, ys in _segments(points):
-            if len(xs) < 2:
-                continue
-            tracks.append((color, xs, ys))
-    _glow_to_zero(ax, tracks)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(_axis_money))
-    handles = []
-    seen: set[str] = set()
-    for title, points, color in reversed(prepared):
-        labeled = False
-        for xs, ys in _segments(points):
-            label = title if title not in seen else None
-            if len(xs) >= 2:
-                line, = ax.plot(xs, ys, color=color, linewidth=2.2, solid_capstyle="round", zorder=3, label=label)
-            else:
-                line, = ax.plot(
-                    xs,
-                    ys,
-                    color=color,
-                    marker="o",
-                    markersize=5,
-                    linewidth=0,
-                    zorder=3,
-                    label=label,
-                )
-            if label:
-                handles.append(line)
-                seen.add(title)
-                labeled = True
-        if not labeled and title in seen:
+        ax.set_ylim(lo - span * 0.06, hi + span * 0.08)
+        ax.axhline(0, color="#C7C7CC", linewidth=0.9, linestyle=(0, (3, 3)), zorder=1)
+    drawn: list[tuple[np.ndarray, np.ndarray, str]] = []
+    for title, points, color in prepared:
+        if color == CASH:
+            for line in money_lines:
+                if len(line) >= 2:
+                    xs = np.array([point[0] for point in line], dtype=float)
+                    ys = np.array([point[1] for point in line], dtype=float)
+                    drawn.append((xs, ys, color))
+                elif len(line) == 1:
+                    ax.plot(line[0][0], line[0][1], color=color, marker="o", markersize=4.5, zorder=4)
             continue
-    handles.reverse()
-    if handles:
-        legend = ax.legend(
-            handles=handles,
-            loc="lower left",
-            bbox_to_anchor=(0.0, 1.02),
-            ncol=len(handles),
-            frameon=False,
-            fontsize=11,
-            handlelength=1.6,
-            columnspacing=1.4,
-            borderaxespad=0.0,
-        )
-        for text, handle in zip(legend.get_texts(), handles):
-            text.set_color(handle.get_color())
-    _day_ticks(ax, count)
-    fig.tight_layout(pad=0.6)
+        for xs, ys in _segments(points):
+            if len(xs) >= 2:
+                drawn.append((xs, ys, color))
+            elif len(xs) == 1:
+                ax.plot(xs, ys, color=color, marker="o", markersize=4.5, linewidth=0, zorder=4)
+    _glow_to_zero(ax, [(color, xs, ys) for xs, ys, color in drawn if len(xs) >= 2])
+    # Долги снизу, баланс с учётом долгов поверх: он доходит до той же точки и не выше.
+    for color in (DEBT, BALANCE, CASH):
+        for xs, ys, track_color in drawn:
+            if track_color != color:
+                continue
+            ax.plot(xs, ys, color=color, linewidth=1.8, solid_capstyle="round", solid_joinstyle="round", zorder=4)
+    _finance_days(ax, count, year, month)
     return _png(fig)
 
 
